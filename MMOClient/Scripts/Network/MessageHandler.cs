@@ -177,10 +177,8 @@ public class MessageHandler : MonoBehaviour
                     HandleItemDropped(json);
                     break;
 					
-					case "skillsResponse":
-    HandleSkillsResponse(json);
-    break;
 
+	
 case "skillUsed":
     HandleSkillUsed(json);
     break;
@@ -201,6 +199,10 @@ case "skillListResponse":
     HandleSkillListResponse(json);
     break;
 	
+	case "skillsResponse":
+    HandleSkillsResponse(json);
+    break;
+
 
                 // ==================== ERRORS ====================
                 case "error":
@@ -636,6 +638,9 @@ private void HandleSkillLeveledUp(JObject json)
     }
 }
 
+/// <summary>
+/// 🆕 Handler para lista de skills disponíveis
+/// </summary>
 private void HandleSkillListResponse(JObject json)
 {
     try
@@ -644,40 +649,83 @@ private void HandleSkillListResponse(JObject json)
         
         if (skillsArray == null)
         {
-            Debug.LogWarning("⚠️ No skills in skillListResponse");
+            Debug.LogWarning("⚠️ No skills array in skillListResponse");
             return;
         }
 
-        // Mostra lista de skills disponíveis (para UI de aprendizado)
-        Debug.Log($"📖 Available skills: {skillsArray.Count()}");
+        var availableSkills = new List<SkillTemplateData>();
 
-        // TODO: Enviar para UI de skills (quando implementar)
+        foreach (var skillJson in skillsArray)
+        {
+            var skill = new SkillTemplateData
+            {
+                id = skillJson["id"]?.ToObject<int>() ?? 0,
+                name = skillJson["name"]?.ToString() ?? "",
+                description = skillJson["description"]?.ToString() ?? "",
+                skillType = skillJson["skillType"]?.ToString() ?? "",
+                damageType = skillJson["damageType"]?.ToString() ?? "",
+                targetType = skillJson["targetType"]?.ToString() ?? "",
+                requiredLevel = skillJson["requiredLevel"]?.ToObject<int>() ?? 1,
+                requiredClass = skillJson["requiredClass"]?.ToString() ?? "",
+                maxLevel = skillJson["maxLevel"]?.ToObject<int>() ?? 10,
+                manaCost = skillJson["manaCost"]?.ToObject<int>() ?? 0,
+                healthCost = skillJson["healthCost"]?.ToObject<int>() ?? 0,
+                cooldown = skillJson["cooldown"]?.ToObject<float>() ?? 0f,
+                castTime = skillJson["castTime"]?.ToObject<float>() ?? 0f,
+                range = skillJson["range"]?.ToObject<float>() ?? 0f,
+                areaRadius = skillJson["areaRadius"]?.ToObject<float>() ?? 0f,
+                iconPath = skillJson["iconPath"]?.ToString() ?? "",
+                levels = ParseSkillLevels(skillJson["levels"])
+            };
+
+            availableSkills.Add(skill);
+        }
+
+        Debug.Log($"📖 Received {availableSkills.Count} available skills from server");
+
+        // Envia para o SkillBookUI
+        if (SkillBookUI.Instance != null)
+        {
+            SkillBookUI.Instance.UpdateAvailableSkills(availableSkills);
+        }
+        else
+        {
+            Debug.LogWarning("⚠️ SkillBookUI.Instance is null!");
+        }
     }
     catch (Exception ex)
     {
-        Debug.LogError($"❌ Error parsing skill list: {ex.Message}");
+        Debug.LogError($"❌ Error parsing skill list response: {ex.Message}");
+        Debug.LogError($"   StackTrace: {ex.StackTrace}");
     }
 }
 
 /// <summary>
-/// Helper para parsear dados de nível da skill
+/// Helper para parsear múltiplos níveis de skill
 /// </summary>
-private SkillLevelData[] ParseSkillLevels(JToken levelDataJson)
+private SkillLevelData[] ParseSkillLevels(JToken levelsJson)
 {
-    if (levelDataJson == null)
+    if (levelsJson == null || !levelsJson.HasValues)
         return new SkillLevelData[0];
 
-    var levelData = new SkillLevelData
-    {
-        level = levelDataJson["level"]?.ToObject<int>() ?? 1,
-        baseDamage = levelDataJson["baseDamage"]?.ToObject<int>() ?? 0,
-        baseHealing = levelDataJson["baseHealing"]?.ToObject<int>() ?? 0,
-        damageMultiplier = levelDataJson["damageMultiplier"]?.ToObject<float>() ?? 1f,
-        critChanceBonus = levelDataJson["critChanceBonus"]?.ToObject<float>() ?? 0f,
-        statusPointCost = levelDataJson["statusPointCost"]?.ToObject<int>() ?? 1
-    };
+    var levels = new List<SkillLevelData>();
 
-    return new SkillLevelData[] { levelData };
+    foreach (var levelJson in levelsJson)
+    {
+        var levelData = new SkillLevelData
+        {
+            level = levelJson["level"]?.ToObject<int>() ?? 1,
+            baseDamage = levelJson["baseDamage"]?.ToObject<int>() ?? 0,
+            baseHealing = levelJson["baseHealing"]?.ToObject<int>() ?? 0,
+            damageMultiplier = levelJson["damageMultiplier"]?.ToObject<float>() ?? 1f,
+            critChanceBonus = levelJson["critChanceBonus"]?.ToObject<float>() ?? 0f,
+            statusPointCost = levelJson["statusPointCost"]?.ToObject<int>() ?? 1
+        };
+
+        levels.Add(levelData);
+    }
+
+    return levels.ToArray();
 }
     // ==================== INVENTORY ====================
 
