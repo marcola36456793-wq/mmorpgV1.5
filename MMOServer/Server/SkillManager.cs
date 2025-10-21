@@ -25,12 +25,26 @@ namespace MMOServer.Server
         private Random random = new Random();
         private int nextEffectId = 1;
 
-        public void Initialize()
+public void Initialize()
+{
+    Console.WriteLine("⚔️ SkillManager: Initializing...");
+    LoadSkillTemplates();
+    Console.WriteLine($"✅ SkillManager: Loaded {skillTemplates.Count} skill templates");
+    
+    // 🔍 ADICIONE ISTO:
+    if (skillTemplates.Count == 0)
+    {
+        Console.WriteLine("❌ WARNING: No skills loaded! Check Config/skills.json");
+    }
+    else
+    {
+        Console.WriteLine($"   Available skills:");
+        foreach (var skill in skillTemplates.Values.Take(3))
         {
-            Console.WriteLine("⚔️ SkillManager: Initializing...");
-            LoadSkillTemplates();
-            Console.WriteLine($"✅ SkillManager: Loaded {skillTemplates.Count} skill templates");
+            Console.WriteLine($"   - [{skill.id}] {skill.name} ({skill.requiredClass})");
         }
+    }
+}
 
         // ==================== CONFIGURAÇÃO ====================
 
