@@ -20,7 +20,7 @@ namespace MMOServer.Server
             }
         }
 
-        private Dictionary<int, SkillTemplate> skillTemplates = new Dictionary<int, SkillTemplate>();
+        public Dictionary<int, SkillTemplate> skillTemplates = new Dictionary<int, SkillTemplate>();
         private ConcurrentDictionary<string, List<ActiveEffect>> activeEffects = new ConcurrentDictionary<string, List<ActiveEffect>>();
         private Random random = new Random();
         private int nextEffectId = 1;
@@ -478,7 +478,7 @@ public void Initialize()
 
         // ==================== APRENDIZADO DE SKILLS ====================
 
-        public bool LearnSkill(Player player, int skillId, int slotNumber)
+       public bool LearnSkill(Player player, int skillId, int slotNumber)
         {
             var template = GetSkillTemplate(skillId);
             
@@ -539,13 +539,15 @@ public void Initialize()
             };
 
             player.character.learnedSkills.Add(learnedSkill);
-            DatabaseHandler.Instance.UpdateCharacter(player.character);
+            
+            // ✅ SALVA SKILLS EXPLICITAMENTE
+            DatabaseHandler.Instance.SaveCharacterSkills(player.character.id, player.character.learnedSkills);
 
             Console.WriteLine($"✅ {player.character.nome} learned {template.name} (Slot {slotNumber})");
             return true;
         }
 
-        public bool LevelUpSkill(Player player, int skillId)
+         public bool LevelUpSkill(Player player, int skillId)
         {
             var learnedSkill = player.character.learnedSkills?.FirstOrDefault(s => s.skillId == skillId);
             
@@ -579,7 +581,9 @@ public void Initialize()
             player.character.statusPoints -= nextLevelData.statusPointCost;
             learnedSkill.currentLevel++;
 
+            // ✅ SALVA AMBOS: character E skills
             DatabaseHandler.Instance.UpdateCharacter(player.character);
+            DatabaseHandler.Instance.SaveCharacterSkills(player.character.id, player.character.learnedSkills);
 
             Console.WriteLine($"✅ {template.name} leveled up to {learnedSkill.currentLevel}!");
             return true;
@@ -618,11 +622,37 @@ public void Initialize()
             LoadSkillTemplates();
             Console.WriteLine("✅ Skill configurations reloaded!");
         }
-    }
+    
+	/// <summary>
+/// Valida se o personagem pode aprender a skill
+/// </summary>
+public (bool canLearn, string reason) CanLearnSkill(Character character, int skillId)
+{
+    var template = GetSkillTemplate(skillId);
+    
+    if (template == null)
+        return (false, "Skill não encontrada");
+
+    // Verifica nível
+    if (character.level < template.requiredLevel)
+        return (false, $"Nível insuficiente (requer {template.requiredLevel})");
+
+    // Verifica classe
+    if (!string.IsNullOrEmpty(template.requiredClass) && 
+        template.requiredClass != character.classe)
+        return (false, $"Classe incorreta (requer {template.requiredClass})");
+
+    // Verifica se já aprendeu
+    if (character.learnedSkills?.Any(s => s.skillId == skillId) == true)
+        return (false, "Skill já aprendida");
+
+    return (true, "OK");
+}
 
     [Serializable]
     public class SkillConfig
     {
         public List<SkillTemplate> skills { get; set; } = new List<SkillTemplate>();
     }
+}
 }
