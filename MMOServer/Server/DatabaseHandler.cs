@@ -272,18 +272,16 @@ public void SaveCharacterSkills(int characterId, List<LearnedSkill> skills)
     using var conn = GetConnection();
     conn.Open();
 
-    // Remove skills antigas
-    var deleteQuery = "DELETE FROM character_skills WHERE character_id = @characterId";
-    using var deleteCmd = new MySqlCommand(deleteQuery, conn);
-    deleteCmd.Parameters.AddWithValue("@characterId", characterId);
-    deleteCmd.ExecuteNonQuery();
-
-    // Insere skills atualizadas
+    // ✅ USA INSERT ... ON DUPLICATE KEY UPDATE ao invés de DELETE + INSERT
     foreach (var skill in skills)
     {
         var query = @"INSERT INTO character_skills 
             (character_id, skill_id, current_level, slot_number, last_used_time) 
-            VALUES (@characterId, @skillId, @currentLevel, @slotNumber, @lastUsedTime)";
+            VALUES (@characterId, @skillId, @currentLevel, @slotNumber, @lastUsedTime)
+            ON DUPLICATE KEY UPDATE
+                current_level = VALUES(current_level),
+                slot_number = VALUES(slot_number),
+                last_used_time = VALUES(last_used_time)";
         
         using var cmd = new MySqlCommand(query, conn);
         cmd.Parameters.AddWithValue("@characterId", characterId);
@@ -291,7 +289,15 @@ public void SaveCharacterSkills(int characterId, List<LearnedSkill> skills)
         cmd.Parameters.AddWithValue("@currentLevel", skill.currentLevel);
         cmd.Parameters.AddWithValue("@slotNumber", skill.slotNumber);
         cmd.Parameters.AddWithValue("@lastUsedTime", skill.lastUsedTime);
-        cmd.ExecuteNonQuery();
+        
+        try
+        {
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Error saving skill {skill.skillId}: {ex.Message}");
+        }
     }
 }
 
