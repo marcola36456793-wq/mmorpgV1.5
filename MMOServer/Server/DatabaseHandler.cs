@@ -1,664 +1,478 @@
-using MySql.Data.MySqlClient;
-using MMOServer.Models;
-using MMOServer.Configuration;
+using System.Timers;
 using Newtonsoft.Json;
+using MMOServer.Models;
 
 namespace MMOServer.Server
 {
-    public class DatabaseHandler
+    public class WorldManager
     {
-        private static DatabaseHandler? instance;
-        public static DatabaseHandler Instance
+        private static WorldManager? instance;
+        public static WorldManager Instance
         {
             get
             {
                 if (instance == null)
-                    instance = new DatabaseHandler();
+                    instance = new WorldManager();
                 return instance;
             }
         }
 
-        private string connectionString = "";
+        private System.Timers.Timer? updateTimer;
+        private const int UPDATE_INTERVAL = 50; // 50ms = 20 ticks/segundo
+        private const int SAVE_INTERVAL = 5000; // Salva a cada 5 segundos
+
+        private long lastSaveTime = 0;
+        private object broadcastLock = new object();
+        
+        private DateTime serverStartTime = DateTime.UtcNow;
 
         public void Initialize()
         {
-            // ✅ AGORA USA appsettings.json
-            connectionString = ConfigLoader.Instance.Settings.DatabaseSettings.GetConnectionString();
+            Console.WriteLine("WorldManager initialized - Authoritative Server Mode (Ragnarok-style)");
             
-            Console.WriteLine("💾 Database Handler initialized");
-            Console.WriteLine($"   Connection: {ConfigLoader.Instance.Settings.DatabaseSettings.Server}/{ConfigLoader.Instance.Settings.DatabaseSettings.Database}");
+            serverStartTime = DateTime.UtcNow;
             
-            // Testa conexão
-            try
-            {
-                using var conn = GetConnection();
-                conn.Open();
-                Console.WriteLine("✅ Database connection test successful!");
-                conn.Close();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ Database connection failed: {ex.Message}");
-                Console.WriteLine($"   Check your appsettings.json database configuration!");
-            }
-        }
-
-        private MySqlConnection GetConnection()
-        {
-            return new MySqlConnection(connectionString);
-        }
-
-        // ==================== ACCOUNTS ====================
-        
-        public int ValidateLogin(string username, string password)
-        {
-            using var conn = GetConnection();
-            conn.Open();
-
-            var query = "SELECT id FROM accounts WHERE username = @username AND password = @password";
-            using var cmd = new MySqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@username", username);
-            cmd.Parameters.AddWithValue("@password", password);
-
-            var result = cmd.ExecuteScalar();
-            return result != null ? Convert.ToInt32(result) : 0;
-        }
-
-        public bool CreateAccount(string username, string password)
-        {
-            try
-            {
-                using var conn = GetConnection();
-                conn.Open();
-
-                var query = "INSERT INTO accounts (username, password) VALUES (@username, @password)";
-                using var cmd = new MySqlCommand(query, conn);
-                cmd.Parameters.AddWithValue("@username", username);
-                cmd.Parameters.AddWithValue("@password", password);
-
-                cmd.ExecuteNonQuery();
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        // ==================== CHARACTERS ====================
-        
-        public int CreateCharacter(Character character)
-        {
-            using var conn = GetConnection();
-            conn.Open();
-
-            var query = @"INSERT INTO characters (
-                account_id, nome, raca, classe, level, experience, status_points,
-                health, max_health, mana, max_mana,
-                strength, intelligence, dexterity, vitality,
-                attack_power, magic_power, defense, attack_speed,
-                pos_x, pos_y, pos_z, is_dead
-            ) VALUES (
-                @accountId, @nome, @raca, @classe, @level, @experience, @statusPoints,
-                @health, @maxHealth, @mana, @maxMana,
-                @strength, @intelligence, @dexterity, @vitality,
-                @attackPower, @magicPower, @defense, @attackSpeed,
-                @posX, @posY, @posZ, @isDead
-            )";
+            MonsterManager.Instance.Initialize();
+            SkillManager.Instance.Initialize(); // 🆕 ADICIONE ESTA LINHA
+			
+            updateTimer = new System.Timers.Timer(UPDATE_INTERVAL);
+            updateTimer.Elapsed += OnWorldUpdate;
+            updateTimer.AutoReset = true;
+            updateTimer.Start();
             
-            using var cmd = new MySqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@accountId", character.accountId);
-            cmd.Parameters.AddWithValue("@nome", character.nome);
-            cmd.Parameters.AddWithValue("@raca", character.raca);
-            cmd.Parameters.AddWithValue("@classe", character.classe);
-            cmd.Parameters.AddWithValue("@level", character.level);
-            cmd.Parameters.AddWithValue("@experience", character.experience);
-            cmd.Parameters.AddWithValue("@statusPoints", character.statusPoints);
-            cmd.Parameters.AddWithValue("@health", character.health);
-            cmd.Parameters.AddWithValue("@maxHealth", character.maxHealth);
-            cmd.Parameters.AddWithValue("@mana", character.mana);
-            cmd.Parameters.AddWithValue("@maxMana", character.maxMana);
-            cmd.Parameters.AddWithValue("@strength", character.strength);
-            cmd.Parameters.AddWithValue("@intelligence", character.intelligence);
-            cmd.Parameters.AddWithValue("@dexterity", character.dexterity);
-            cmd.Parameters.AddWithValue("@vitality", character.vitality);
-            cmd.Parameters.AddWithValue("@attackPower", character.attackPower);
-            cmd.Parameters.AddWithValue("@magicPower", character.magicPower);
-            cmd.Parameters.AddWithValue("@defense", character.defense);
-            cmd.Parameters.AddWithValue("@attackSpeed", character.attackSpeed);
-            cmd.Parameters.AddWithValue("@posX", character.position.x);
-            cmd.Parameters.AddWithValue("@posY", character.position.y);
-            cmd.Parameters.AddWithValue("@posZ", character.position.z);
-            cmd.Parameters.AddWithValue("@isDead", character.isDead);
-
-            cmd.ExecuteNonQuery();
-            int characterId = (int)cmd.LastInsertedId;
+            lastSaveTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             
-            // Cria inventário inicial
-            CreateDefaultInventory(characterId);
-            
-            return characterId;
+            Console.WriteLine("✅ Combat System: Ragnarok-style auto-attack enabled");
+			Console.WriteLine("✅ Skill System: Skills 1-9 enabled");
+            Console.WriteLine("   - Click monster to start attacking");
+            Console.WriteLine("   - Click ground/another monster to stop");
+            Console.WriteLine("   - Attack speed based on character ASPD");
+            Console.WriteLine("✅ Loot System: Monster drops enabled");
+            Console.WriteLine("   - Gold and items drop on monster death");
+			
         }
 
-        public List<Character> GetCharacters(int accountId)
-        {
-            var characters = new List<Character>();
-
-            using var conn = GetConnection();
-            conn.Open();
-
-            var query = "SELECT * FROM characters WHERE account_id = @accountId";
-            using var cmd = new MySqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@accountId", accountId);
-
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                characters.Add(ReadCharacterFromReader(reader));
-            }
-
-            return characters;
-        }
-
-public Character? GetCharacter(int characterId)
+private void OnWorldUpdate(object? sender, ElapsedEventArgs e)
 {
-    using var conn = GetConnection();
-    conn.Open();
-
-    var query = "SELECT * FROM characters WHERE id = @id";
-    using var cmd = new MySqlCommand(query, conn);
-    cmd.Parameters.AddWithValue("@id", characterId);
-
-    using var reader = cmd.ExecuteReader();
-    if (reader.Read())
+    lock (broadcastLock)
     {
-        var character = ReadCharacterFromReader(reader);
-        reader.Close();
+        long currentTimeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         
-        // 🆕 Carrega skills
-        character.learnedSkills = LoadCharacterSkills(characterId);
+        float currentTime = (float)(DateTime.UtcNow - serverStartTime).TotalSeconds;
+        float deltaTime = UPDATE_INTERVAL / 1000f;
+
+        // 1. Atualiza movimento de players
+        PlayerManager.Instance.UpdateAllPlayersMovement(deltaTime);
         
-        return character;
-    }
-
-    return null;
-}
-
-        private Character ReadCharacterFromReader(MySqlDataReader reader)
+        // 2. Processa combate automático
+        ProcessPlayerCombat(currentTime, deltaTime);
+        
+        // 3. Atualiza monstros (AI e combate)
+        MonsterManager.Instance.Update(deltaTime, currentTime);
+        
+        // 🆕 4. Atualiza efeitos de skills (buffs/debuffs)
+        SkillManager.Instance.UpdateActiveEffects(currentTime);
+        
+        // 5. Broadcast do estado do mundo
+        BroadcastWorldState();
+        
+        // 6. Salva periodicamente
+        if (currentTimeMs - lastSaveTime >= SAVE_INTERVAL)
         {
-            return new Character
-            {
-                id = reader.GetInt32("id"),
-                accountId = reader.GetInt32("account_id"),
-                nome = reader.GetString("nome"),
-                raca = reader.GetString("raca"),
-                classe = reader.GetString("classe"),
-                level = reader.GetInt32("level"),
-                experience = reader.GetInt32("experience"),
-                statusPoints = reader.GetInt32("status_points"),
-                health = reader.GetInt32("health"),
-                maxHealth = reader.GetInt32("max_health"),
-                mana = reader.GetInt32("mana"),
-                maxMana = reader.GetInt32("max_mana"),
-                strength = reader.GetInt32("strength"),
-                intelligence = reader.GetInt32("intelligence"),
-                dexterity = reader.GetInt32("dexterity"),
-                vitality = reader.GetInt32("vitality"),
-                attackPower = reader.GetInt32("attack_power"),
-                magicPower = reader.GetInt32("magic_power"),
-                defense = reader.GetInt32("defense"),
-                attackSpeed = reader.GetFloat("attack_speed"),
-                position = new Position
-                {
-                    x = reader.GetFloat("pos_x"),
-                    y = reader.GetFloat("pos_y"),
-                    z = reader.GetFloat("pos_z")
-                },
-                isDead = reader.GetBoolean("is_dead")
-            };
-        }
-
-public void UpdateCharacter(Character character)
-{
-    using var conn = GetConnection();
-    conn.Open();
-
-    var query = @"UPDATE characters SET 
-        level = @level, experience = @experience, status_points = @statusPoints,
-        health = @health, max_health = @maxHealth,
-        mana = @mana, max_mana = @maxMana,
-        strength = @strength, intelligence = @intelligence,
-        dexterity = @dexterity, vitality = @vitality,
-        attack_power = @attackPower, magic_power = @magicPower,
-        defense = @defense, attack_speed = @attackSpeed,
-        pos_x = @posX, pos_y = @posY, pos_z = @posZ,
-        is_dead = @isDead
-        WHERE id = @id";
-    
-    using var cmd = new MySqlCommand(query, conn);
-    cmd.Parameters.AddWithValue("@id", character.id);
-    cmd.Parameters.AddWithValue("@level", character.level);
-    cmd.Parameters.AddWithValue("@experience", character.experience);
-    cmd.Parameters.AddWithValue("@statusPoints", character.statusPoints);
-    cmd.Parameters.AddWithValue("@health", character.health);
-    cmd.Parameters.AddWithValue("@maxHealth", character.maxHealth);
-    cmd.Parameters.AddWithValue("@mana", character.mana);
-    cmd.Parameters.AddWithValue("@maxMana", character.maxMana);
-    cmd.Parameters.AddWithValue("@strength", character.strength);
-    cmd.Parameters.AddWithValue("@intelligence", character.intelligence);
-    cmd.Parameters.AddWithValue("@dexterity", character.dexterity);
-    cmd.Parameters.AddWithValue("@vitality", character.vitality);
-    cmd.Parameters.AddWithValue("@attackPower", character.attackPower);
-    cmd.Parameters.AddWithValue("@magicPower", character.magicPower);
-    cmd.Parameters.AddWithValue("@defense", character.defense);
-    cmd.Parameters.AddWithValue("@attackSpeed", character.attackSpeed);
-    cmd.Parameters.AddWithValue("@posX", character.position.x);
-    cmd.Parameters.AddWithValue("@posY", character.position.y);
-    cmd.Parameters.AddWithValue("@posZ", character.position.z);
-    cmd.Parameters.AddWithValue("@isDead", character.isDead);
-
-    cmd.ExecuteNonQuery();
-
-    // 🆕 Salva skills
-    if (character.learnedSkills != null)
-    {
-        SaveCharacterSkills(character.id, character.learnedSkills);
-    }
-}
-		// ==================== SKILLS ====================
-
-public void SaveCharacterSkills(int characterId, List<LearnedSkill> skills)
-{
-    using var conn = GetConnection();
-    conn.Open();
-
-    // ✅ USA INSERT ... ON DUPLICATE KEY UPDATE ao invés de DELETE + INSERT
-    foreach (var skill in skills)
-    {
-        var query = @"INSERT INTO character_skills 
-            (character_id, skill_id, current_level, slot_number, last_used_time) 
-            VALUES (@characterId, @skillId, @currentLevel, @slotNumber, @lastUsedTime)
-            ON DUPLICATE KEY UPDATE
-                current_level = VALUES(current_level),
-                slot_number = VALUES(slot_number),
-                last_used_time = VALUES(last_used_time)";
-        
-        using var cmd = new MySqlCommand(query, conn);
-        cmd.Parameters.AddWithValue("@characterId", characterId);
-        cmd.Parameters.AddWithValue("@skillId", skill.skillId);
-        cmd.Parameters.AddWithValue("@currentLevel", skill.currentLevel);
-        cmd.Parameters.AddWithValue("@slotNumber", skill.slotNumber);
-        cmd.Parameters.AddWithValue("@lastUsedTime", skill.lastUsedTime);
-        
-        try
-        {
-            cmd.ExecuteNonQuery();
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"❌ Error saving skill {skill.skillId}: {ex.Message}");
+            SaveWorldState();
+            lastSaveTime = currentTimeMs;
         }
     }
 }
 
-public List<LearnedSkill> LoadCharacterSkills(int characterId)
-{
-    var skills = new List<LearnedSkill>();
-
-    using var conn = GetConnection();
-    conn.Open();
-
-    var query = "SELECT * FROM character_skills WHERE character_id = @characterId";
-    using var cmd = new MySqlCommand(query, conn);
-    cmd.Parameters.AddWithValue("@characterId", characterId);
-
-    using var reader = cmd.ExecuteReader();
-    while (reader.Read())
-    {
-        skills.Add(new LearnedSkill
+        private void ProcessPlayerCombat(float currentTime, float deltaTime)
         {
-            skillId = reader.GetInt32("skill_id"),
-            currentLevel = reader.GetInt32("current_level"),
-            slotNumber = reader.GetInt32("slot_number"),
-            lastUsedTime = reader.GetInt64("last_used_time")
-        });
-    }
-
-    return skills;
-}
-
-        // ==================== MONSTERS ====================
-        
-        public List<MonsterTemplate> GetAllMonsterTemplates()
-        {
-            var templates = new List<MonsterTemplate>();
-
-            using var conn = GetConnection();
-            conn.Open();
-
-            var query = "SELECT * FROM monster_templates";
-            using var cmd = new MySqlCommand(query, conn);
-
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                templates.Add(new MonsterTemplate
-                {
-                    id = reader.GetInt32("id"),
-                    name = reader.GetString("name"),
-                    level = reader.GetInt32("level"),
-                    maxHealth = reader.GetInt32("max_health"),
-                    attackPower = reader.GetInt32("attack_power"),
-                    defense = reader.GetInt32("defense"),
-                    experienceReward = reader.GetInt32("experience_reward"),
-                    attackSpeed = reader.GetFloat("attack_speed"),
-                    movementSpeed = reader.GetFloat("movement_speed"),
-                    aggroRange = reader.GetFloat("aggro_range"),
-                    spawnX = reader.GetFloat("spawn_x"),
-                    spawnY = reader.GetFloat("spawn_y"),
-                    spawnZ = reader.GetFloat("spawn_z"),
-                    spawnRadius = reader.GetFloat("spawn_radius"),
-                    respawnTime = reader.GetInt32("respawn_time")
-                });
-            }
-
-            return templates;
-        }
-
-        public MonsterTemplate? GetMonsterTemplate(int templateId)
-        {
-            using var conn = GetConnection();
-            conn.Open();
-
-            var query = "SELECT * FROM monster_templates WHERE id = @id";
-            using var cmd = new MySqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@id", templateId);
-
-            using var reader = cmd.ExecuteReader();
-            if (reader.Read())
-            {
-                return new MonsterTemplate
-                {
-                    id = reader.GetInt32("id"),
-                    name = reader.GetString("name"),
-                    level = reader.GetInt32("level"),
-                    maxHealth = reader.GetInt32("max_health"),
-                    attackPower = reader.GetInt32("attack_power"),
-                    defense = reader.GetInt32("defense"),
-                    experienceReward = reader.GetInt32("experience_reward"),
-                    attackSpeed = reader.GetFloat("attack_speed"),
-                    movementSpeed = reader.GetFloat("movement_speed"),
-                    aggroRange = reader.GetFloat("aggro_range"),
-                    spawnX = reader.GetFloat("spawn_x"),
-                    spawnY = reader.GetFloat("spawn_y"),
-                    spawnZ = reader.GetFloat("spawn_z"),
-                    spawnRadius = reader.GetFloat("spawn_radius"),
-                    respawnTime = reader.GetInt32("respawn_time")
-                };
-            }
-
-            return null;
-        }
-
-        public List<MonsterInstance> LoadMonsterInstances()
-        {
-            var instances = new List<MonsterInstance>();
-
-            using var conn = GetConnection();
-            conn.Open();
-
-            var query = @"SELECT mi.*, mt.* 
-                         FROM monster_instances mi
-                         JOIN monster_templates mt ON mi.template_id = mt.id";
+            var players = PlayerManager.Instance.GetAllPlayers();
             
-            using var cmd = new MySqlCommand(query, conn);
-            using var reader = cmd.ExecuteReader();
-
-            while (reader.Read())
+            foreach (var player in players)
             {
-                var template = new MonsterTemplate
+                // Ignora players mortos
+                if (player.character.isDead)
                 {
-                    id = reader.GetInt32("template_id"),
-                    name = reader.GetString("name"),
-                    level = reader.GetInt32("level"),
-                    maxHealth = reader.GetInt32("max_health"),
-                    attackPower = reader.GetInt32("attack_power"),
-                    defense = reader.GetInt32("defense"),
-                    experienceReward = reader.GetInt32("experience_reward"),
-                    attackSpeed = reader.GetFloat("attack_speed"),
-                    movementSpeed = reader.GetFloat("movement_speed"),
-                    aggroRange = reader.GetFloat("aggro_range"),
-                    spawnX = reader.GetFloat("spawn_x"),
-                    spawnY = reader.GetFloat("spawn_y"),
-                    spawnZ = reader.GetFloat("spawn_z"),
-                    spawnRadius = reader.GetFloat("spawn_radius"),
-                    respawnTime = reader.GetInt32("respawn_time")
-                };
-
-                instances.Add(new MonsterInstance
-                {
-                    id = reader.GetInt32("id"),
-                    templateId = reader.GetInt32("template_id"),
-                    template = template,
-                    currentHealth = reader.GetInt32("current_health"),
-                    position = new Position
+                    if (player.inCombat)
                     {
-                        x = reader.GetFloat("pos_x"),
-                        y = reader.GetFloat("pos_y"),
-                        z = reader.GetFloat("pos_z")
-                    },
-                    isAlive = reader.GetBoolean("is_alive"),
-                    lastRespawn = reader.GetDateTime("last_respawn")
-                });
-            }
-
-            return instances;
-        }
-
-        public void UpdateMonsterInstance(MonsterInstance monster)
-        {
-            using var conn = GetConnection();
-            conn.Open();
-
-            var query = @"UPDATE monster_instances SET 
-                current_health = @health,
-                pos_x = @posX, pos_y = @posY, pos_z = @posZ,
-                is_alive = @isAlive,
-                last_respawn = @lastRespawn
-                WHERE id = @id";
-            
-            using var cmd = new MySqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@id", monster.id);
-            cmd.Parameters.AddWithValue("@health", monster.currentHealth);
-            cmd.Parameters.AddWithValue("@posX", monster.position.x);
-            cmd.Parameters.AddWithValue("@posY", monster.position.y);
-            cmd.Parameters.AddWithValue("@posZ", monster.position.z);
-            cmd.Parameters.AddWithValue("@isAlive", monster.isAlive);
-            cmd.Parameters.AddWithValue("@lastRespawn", monster.lastRespawn);
-
-            cmd.ExecuteNonQuery();
-        }
-
-        // ==================== COMBAT LOG ====================
-        
-        public void LogCombat(int? characterId, int? monsterId, int damage, string damageType, bool isCritical)
-        {
-            try
-            {
-                using var conn = GetConnection();
-                conn.Open();
-
-                var query = @"INSERT INTO combat_log 
-                    (character_id, monster_id, damage_dealt, damage_type, is_critical) 
-                    VALUES (@charId, @monsterId, @damage, @damageType, @isCritical)";
+                        player.CancelCombat();
+                    }
+                    continue;
+                }
                 
-                using var cmd = new MySqlCommand(query, conn);
-                cmd.Parameters.AddWithValue("@charId", characterId.HasValue ? characterId.Value : DBNull.Value);
-                cmd.Parameters.AddWithValue("@monsterId", monsterId.HasValue ? monsterId.Value : DBNull.Value);
-                cmd.Parameters.AddWithValue("@damage", damage);
-                cmd.Parameters.AddWithValue("@damageType", damageType);
-                cmd.Parameters.AddWithValue("@isCritical", isCritical);
+                if (!player.inCombat || !player.targetMonsterId.HasValue)
+                    continue;
 
-                cmd.ExecuteNonQuery();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error logging combat: {ex.Message}");
-            }
-        }
-
-        // ==================== INVENTÁRIO ====================
-
-        private void CreateDefaultInventory(int characterId)
-        {
-            using var conn = GetConnection();
-            conn.Open();
-
-            var query = @"INSERT INTO inventories (character_id, max_slots, gold) 
-                         VALUES (@characterId, 50, 100)";
-            
-            using var cmd = new MySqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@characterId", characterId);
-            cmd.ExecuteNonQuery();
-
-            // Adiciona 5 poções de vida pequena iniciais
-            var nextId = GetNextItemInstanceId();
-            var itemQuery = @"INSERT INTO item_instances 
-                (instance_id, character_id, template_id, quantity, slot, is_equipped) 
-                VALUES (@instanceId, @characterId, 1, 5, 0, FALSE)";
-            
-            using var itemCmd = new MySqlCommand(itemQuery, conn);
-            itemCmd.Parameters.AddWithValue("@instanceId", nextId);
-            itemCmd.Parameters.AddWithValue("@characterId", characterId);
-            itemCmd.ExecuteNonQuery();
-
-            SaveNextItemInstanceId(nextId + 1);
-        }
-
-        public Inventory LoadInventory(int characterId)
-        {
-            var inventory = new Inventory { characterId = characterId };
-
-            using var conn = GetConnection();
-            conn.Open();
-
-            // Carrega dados do inventário
-            var query = @"SELECT * FROM inventories WHERE character_id = @characterId";
-            using var cmd = new MySqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@characterId", characterId);
-
-            using var reader = cmd.ExecuteReader();
-            if (reader.Read())
-            {
-                inventory.maxSlots = reader.GetInt32("max_slots");
-                inventory.gold = reader.GetInt32("gold");
-                inventory.weaponId = reader.IsDBNull(reader.GetOrdinal("weapon_id")) ? null : reader.GetInt32("weapon_id");
-                inventory.armorId = reader.IsDBNull(reader.GetOrdinal("armor_id")) ? null : reader.GetInt32("armor_id");
-                inventory.helmetId = reader.IsDBNull(reader.GetOrdinal("helmet_id")) ? null : reader.GetInt32("helmet_id");
-                inventory.bootsId = reader.IsDBNull(reader.GetOrdinal("boots_id")) ? null : reader.GetInt32("boots_id");
-                inventory.glovesId = reader.IsDBNull(reader.GetOrdinal("gloves_id")) ? null : reader.GetInt32("gloves_id");
-                inventory.ringId = reader.IsDBNull(reader.GetOrdinal("ring_id")) ? null : reader.GetInt32("ring_id");
-                inventory.necklaceId = reader.IsDBNull(reader.GetOrdinal("necklace_id")) ? null : reader.GetInt32("necklace_id");
-            }
-            reader.Close();
-
-            // Carrega itens
-            var itemQuery = @"SELECT * FROM item_instances WHERE character_id = @characterId";
-            using var itemCmd = new MySqlCommand(itemQuery, conn);
-            itemCmd.Parameters.AddWithValue("@characterId", characterId);
-
-            using var itemReader = itemCmd.ExecuteReader();
-            while (itemReader.Read())
-            {
-                inventory.items.Add(new ItemInstance
+                var monster = MonsterManager.Instance.GetMonster(player.targetMonsterId.Value);
+                
+                if (monster == null || !monster.isAlive)
                 {
-                    instanceId = itemReader.GetInt32("instance_id"),
-                    templateId = itemReader.GetInt32("template_id"),
-                    quantity = itemReader.GetInt32("quantity"),
-                    slot = itemReader.GetInt32("slot"),
-                    isEquipped = itemReader.GetBoolean("is_equipped")
-                });
-            }
+                    player.CancelCombat();
+                    Console.WriteLine($"⚠️ {player.character.nome} stopped attacking (target died)");
+                    continue;
+                }
 
-            return inventory;
-        }
-
-        public void SaveInventory(Inventory inventory)
-        {
-            using var conn = GetConnection();
-            conn.Open();
-
-            // Atualiza inventário
-            var query = @"UPDATE inventories SET 
-                max_slots = @maxSlots, 
-                gold = @gold,
-                weapon_id = @weaponId,
-                armor_id = @armorId,
-                helmet_id = @helmetId,
-                boots_id = @bootsId,
-                gloves_id = @glovesId,
-                ring_id = @ringId,
-                necklace_id = @necklaceId
-                WHERE character_id = @characterId";
-            
-            using var cmd = new MySqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@characterId", inventory.characterId);
-            cmd.Parameters.AddWithValue("@maxSlots", inventory.maxSlots);
-            cmd.Parameters.AddWithValue("@gold", inventory.gold);
-            cmd.Parameters.AddWithValue("@weaponId", inventory.weaponId.HasValue ? inventory.weaponId.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("@armorId", inventory.armorId.HasValue ? inventory.armorId.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("@helmetId", inventory.helmetId.HasValue ? inventory.helmetId.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("@bootsId", inventory.bootsId.HasValue ? inventory.bootsId.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("@glovesId", inventory.glovesId.HasValue ? inventory.glovesId.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("@ringId", inventory.ringId.HasValue ? inventory.ringId.Value : DBNull.Value);
-            cmd.Parameters.AddWithValue("@necklaceId", inventory.necklaceId.HasValue ? inventory.necklaceId.Value : DBNull.Value);
-            cmd.ExecuteNonQuery();
-
-            // Remove itens antigos
-            var deleteQuery = @"DELETE FROM item_instances WHERE character_id = @characterId";
-            using var deleteCmd = new MySqlCommand(deleteQuery, conn);
-            deleteCmd.Parameters.AddWithValue("@characterId", inventory.characterId);
-            deleteCmd.ExecuteNonQuery();
-
-            // Insere itens atualizados
-            foreach (var item in inventory.items)
-            {
-                var itemQuery = @"INSERT INTO item_instances 
-                    (instance_id, character_id, template_id, quantity, slot, is_equipped) 
-                    VALUES (@instanceId, @characterId, @templateId, @quantity, @slot, @isEquipped)";
+                float distance = GetDistance2D(player.position, monster.position);
+                float attackRange = CombatManager.Instance.GetAttackRange();
                 
-                using var itemCmd = new MySqlCommand(itemQuery, conn);
-                itemCmd.Parameters.AddWithValue("@instanceId", item.instanceId);
-                itemCmd.Parameters.AddWithValue("@characterId", inventory.characterId);
-                itemCmd.Parameters.AddWithValue("@templateId", item.templateId);
-                itemCmd.Parameters.AddWithValue("@quantity", item.quantity);
-                itemCmd.Parameters.AddWithValue("@slot", item.slot);
-                itemCmd.Parameters.AddWithValue("@isEquipped", item.isEquipped);
-                itemCmd.ExecuteNonQuery();
+                if (distance > attackRange)
+                {
+                    player.targetPosition = new Position 
+                    { 
+                        x = monster.position.x, 
+                        y = monster.position.y, 
+                        z = monster.position.z 
+                    };
+                    player.isMoving = true;
+                    
+                    if (player.lastAttackTime < 0)
+                    {
+                        player.lastAttackTime = currentTime - player.character.attackSpeed;
+                    }
+                }
+                else
+                {
+                    player.isMoving = false;
+                    player.targetPosition = null;
+                    
+				if (player.CanAttack(currentTime))
+					{
+						player.Attack(currentTime);
+    
+						// 🆕 ADICIONE ESTA LINHA ANTES DO COMBATE
+						BroadcastPlayerAttack(player, monster);
+    
+						var result = CombatManager.Instance.PlayerAttackMonster(player, monster);
+    
+							BroadcastCombatResult(result);
+
+                        if (result.damage > 0)
+                        {
+                            string critText = result.isCritical ? " CRIT!" : "";
+                            float timeSinceLastAttack = currentTime - (player.lastAttackTime - player.character.attackSpeed);
+                            
+                            Console.WriteLine($"⚔️ {player.character.nome} -> {monster.template.name}: " +
+                                            $"{result.damage}{critText} dmg " +
+                                            $"(HP: {result.remainingHealth}/{monster.template.maxHealth}) " +
+                                            $"[ASPD: {player.character.attackSpeed:F2}s] " +
+                                            $"[Cooldown OK: {timeSinceLastAttack:F2}s]");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"❌ {player.character.nome} MISSED {monster.template.name}!");
+                        }
+
+                        // 💰 Se matou, gera loot
+                        if (result.targetDied)
+                        {
+                            player.CancelCombat();
+                            
+                            Console.WriteLine($"💀 {player.character.nome} killed {monster.template.name}! " +
+                                            $"XP: +{result.experienceGained}");
+                            
+                            // 🆕 Gera e distribui loot
+                            ProcessMonsterLoot(player, monster);
+                            
+                            if (result.leveledUp)
+                            {
+                                BroadcastLevelUp(player, result.newLevel);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+		
+		/// <summary>
+        /// ✅ NOVO - Broadcast quando player seleciona target (1º clique)
+        /// NÃO inicia combate, apenas mostra que selecionou
+        /// </summary>
+        public void BroadcastTargetSelection(Player player, MonsterInstance monster)
+        {
+            var message = new
+            {
+                type = "targetSelected",
+                playerId = player.sessionId,
+                characterName = player.character.nome,
+                targetId = monster.id,
+                targetName = monster.template.name,
+                targetType = "monster"
+            };
+
+            string json = JsonConvert.SerializeObject(message);
+            GameServer.BroadcastToAll(json);
+            
+            Console.WriteLine($"🎯 {player.character.nome} selected {monster.template.name} as target");
+        }
+		
+		public void BroadcastSkillResult(SkillResult result)
+{
+    var message = new
+    {
+        type = "skillResult",
+        data = result
+    };
+
+    string json = JsonConvert.SerializeObject(message);
+    GameServer.BroadcastToAll(json);
+}
+		
+/// <summary>
+/// 🆕 Notifica clientes sobre ataque do player
+/// </summary>
+private void BroadcastPlayerAttack(Player player, MonsterInstance monster)
+{
+    var message = new
+    {
+        type = "playerAttack",
+        playerId = player.sessionId,
+        characterName = player.character.nome,
+        monsterId = monster.id,
+        monsterName = monster.template.name,
+        attackerPosition = player.position,
+        targetPosition = monster.position
+    };
+
+    string json = JsonConvert.SerializeObject(message);
+    GameServer.BroadcastToAll(json);
+}
+
+        // 🆕 SISTEMA DE LOOT
+        private void ProcessMonsterLoot(Player player, MonsterInstance monster)
+        {
+            Console.WriteLine($"💰 Generating loot for {monster.template.name} (Template ID: {monster.templateId})...");
+            
+            var loot = ItemManager.Instance.GenerateLoot(monster.templateId);
+            
+            Console.WriteLine($"  - Gold rolled: {loot.gold}");
+            Console.WriteLine($"  - Items rolled: {loot.items.Count}");
+            
+            if (loot.gold == 0 && loot.items.Count == 0)
+            {
+                Console.WriteLine($"  💨 No loot dropped (bad luck)");
+                return;
+            }
+
+            var inventory = ItemManager.Instance.LoadInventory(player.character.id);
+            
+            // Adiciona gold
+            if (loot.gold > 0)
+            {
+                inventory.gold += loot.gold;
+                Console.WriteLine($"  💰 +{loot.gold} gold");
+            }
+
+            // Adiciona itens
+            List<LootedItem> addedItems = new List<LootedItem>();
+            
+            foreach (var lootedItem in loot.items)
+            {
+                var template = ItemManager.Instance.GetItemTemplate(lootedItem.itemId);
+                
+                if (template == null)
+                    continue;
+
+                // Verifica se tem espaço
+                if (!inventory.HasSpace() && template.maxStack == 1)
+                {
+                    Console.WriteLine($"  ⚠️ Inventory full! Could not loot {template.name}");
+                    continue;
+                }
+
+                var itemInstance = ItemManager.Instance.CreateItemInstance(lootedItem.itemId, lootedItem.quantity);
+                
+                if (itemInstance != null && inventory.AddItem(itemInstance, template))
+                {
+                    addedItems.Add(lootedItem);
+                    Console.WriteLine($"  📦 +{lootedItem.quantity}x {template.name}");
+                }
+            }
+
+            // Salva inventário
+            ItemManager.Instance.SaveInventory(inventory);
+
+            // Broadcast de loot
+            if (loot.gold > 0 || addedItems.Count > 0)
+            {
+                BroadcastLoot(player, loot.gold, addedItems);
             }
         }
 
-        public int GetNextItemInstanceId()
+        private void BroadcastLoot(Player player, int gold, List<LootedItem> items)
         {
-            using var conn = GetConnection();
-            conn.Open();
+            var message = new
+            {
+                type = "lootReceived",
+                playerId = player.sessionId,
+                characterName = player.character.nome,
+                gold = gold,
+                items = items
+            };
 
-            var query = "SELECT next_instance_id FROM item_id_counter WHERE id = 1";
-            using var cmd = new MySqlCommand(query, conn);
-            
-            var result = cmd.ExecuteScalar();
-            return result != null ? Convert.ToInt32(result) : 1;
+            string json = JsonConvert.SerializeObject(message);
+            GameServer.BroadcastToAll(json);
         }
 
-        public void SaveNextItemInstanceId(int nextId)
+        private float GetDistance2D(Position pos1, Position pos2)
         {
-            using var conn = GetConnection();
-            conn.Open();
+            float dx = pos1.x - pos2.x;
+            float dz = pos1.z - pos2.z;
+            return (float)Math.Sqrt(dx * dx + dz * dz);
+        }
 
-            var query = "UPDATE item_id_counter SET next_instance_id = @nextId WHERE id = 1";
-            using var cmd = new MySqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("@nextId", nextId);
-            cmd.ExecuteNonQuery();
+        private void BroadcastWorldState()
+        {
+            var players = PlayerManager.Instance.GetAllPlayers();
+            var monsters = MonsterManager.Instance.GetAllMonsterStates();
+            
+            if (players.Count == 0) return;
+
+            var playerStates = players.Select(p => new
+            {
+                playerId = p.sessionId,
+                characterName = p.character.nome,
+                position = p.position,
+                raca = p.character.raca,
+                classe = p.character.classe,
+                level = p.character.level,
+                health = p.character.health,
+                maxHealth = p.character.maxHealth,
+                mana = p.character.mana,
+                maxMana = p.character.maxMana,
+                experience = p.character.experience,
+                statusPoints = p.character.statusPoints,
+                isMoving = p.isMoving,
+                targetPosition = p.targetPosition,
+                inCombat = p.inCombat,
+                targetMonsterId = p.targetMonsterId,
+                isDead = p.character.isDead
+            }).ToList();
+
+            var worldState = new
+            {
+                type = "worldState",
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                players = playerStates,
+                monsters = monsters
+            };
+
+            string json = JsonConvert.SerializeObject(worldState);
+            GameServer.BroadcastToAll(json);
+        }
+
+        public void BroadcastCombatResult(CombatResult result)
+        {
+            var message = new
+            {
+                type = "combatResult",
+                data = result
+            };
+
+            string json = JsonConvert.SerializeObject(message);
+            GameServer.BroadcastToAll(json);
+        }
+		public void BroadcastPlayerStatsUpdate(Player player)
+{
+    var message = new
+    {
+        type = "playerStatsUpdate",
+        playerId = player.sessionId,
+        health = player.character.health,
+        maxHealth = player.character.maxHealth,
+        mana = player.character.mana,
+        maxMana = player.character.maxMana
+    };
+
+    string json = JsonConvert.SerializeObject(message);
+    GameServer.BroadcastToAll(json);
+}
+
+        private void BroadcastLevelUp(Player player, int newLevel)
+        {
+            var message = new
+            {
+                type = "levelUp",
+                playerId = player.sessionId,
+                characterName = player.character.nome,
+                newLevel = newLevel,
+                statusPoints = player.character.statusPoints,
+                experience = player.character.experience,
+                requiredExp = player.character.GetRequiredExp(),
+                newStats = new
+                {
+                    maxHealth = player.character.maxHealth,
+                    maxMana = player.character.maxMana,
+                    attackPower = player.character.attackPower,
+                    magicPower = player.character.magicPower,
+                    defense = player.character.defense,
+                    attackSpeed = player.character.attackSpeed,
+                    strength = player.character.strength,
+                    intelligence = player.character.intelligence,
+                    dexterity = player.character.dexterity,
+                    vitality = player.character.vitality
+                }
+            };
+
+            string json = JsonConvert.SerializeObject(message);
+            GameServer.BroadcastToAll(json);
+        }
+
+        public void BroadcastPlayerDeath(Player player)
+        {
+            var message = new
+            {
+                type = "playerDeath",
+                playerId = player.sessionId,
+                characterName = player.character.nome
+            };
+
+            string json = JsonConvert.SerializeObject(message);
+            GameServer.BroadcastToAll(json);
+        }
+
+        public void BroadcastPlayerRespawn(Player player)
+        {
+            var message = new
+            {
+                type = "playerRespawn",
+                playerId = player.sessionId,
+                characterName = player.character.nome,
+                position = player.position,
+                health = player.character.health,
+                maxHealth = player.character.maxHealth
+            };
+
+            string json = JsonConvert.SerializeObject(message);
+            GameServer.BroadcastToAll(json);
+        }
+
+        private void SaveWorldState()
+        {
+            var players = PlayerManager.Instance.GetAllPlayers();
+            foreach (var player in players)
+            {
+                try
+                {
+                    DatabaseHandler.Instance.UpdateCharacter(player.character);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error saving character {player.character.nome}: {ex.Message}");
+                }
+            }
+
+            MonsterManager.Instance.SaveAllMonsters();
+        }
+
+        public void Shutdown()
+        {
+            Console.WriteLine("WorldManager: Saving all data before shutdown...");
+            SaveWorldState();
+            
+            updateTimer?.Stop();
+            updateTimer?.Dispose();
+            Console.WriteLine("WorldManager shutdown complete");
         }
     }
 }
