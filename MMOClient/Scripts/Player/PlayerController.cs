@@ -3,11 +3,10 @@ using Newtonsoft.Json;
 using TMPro;
 
 /// <summary>
-/// PlayerController - VERSÃO CORRIGIDA
-/// Sistema de target igual Lineage 2:
-/// - 1º clique: Seleciona alvo
-/// - 2º clique: Inicia ataque automático
-/// - Skills: Vai até range e usa
+/// PlayerController - SISTEMA LINEAGE 2 CORRIGIDO
+/// 1º clique: Seleciona alvo (mostra painel)
+/// 2º clique: Inicia ataque automático
+/// Skills: Valida range, move até lá, usa skill
 /// </summary>
 public class PlayerController : MonoBehaviour
 {
@@ -56,9 +55,9 @@ public class PlayerController : MonoBehaviour
     private MonsterController currentTarget;
     private Camera mainCamera;
 
+    // ✅ SISTEMA DE CLIQUE CORRIGIDO
     private float lastClickTime = 0f;
-    private const float DOUBLE_CLICK_TIME = 0.5f; // Tempo para double click
-    private int clickCount = 0;
+    private const float DOUBLE_CLICK_TIME = 0.3f; // Tempo para double click (reduzido para ser mais responsivo)
     private MonsterController lastClickedMonster;
     
     private int currentTargetMonsterId = -1;
@@ -193,7 +192,7 @@ public class PlayerController : MonoBehaviour
     }
 
     /// <summary>
-    /// ✅ SISTEMA DE INPUT CORRIGIDO - Igual Lineage 2
+    /// ✅ SISTEMA DE INPUT CORRIGIDO - Lineage 2 Style
     /// </summary>
     private void HandleInput()
     {
@@ -234,9 +233,9 @@ public class PlayerController : MonoBehaviour
     }
 
     /// <summary>
-    /// ✅ NOVO - Sistema de clique em monstro (Lineage 2 style)
-    /// 1º clique: Seleciona
-    /// 2º clique: Ataca
+    /// ✅ CORRIGIDO - Sistema de clique em monstro
+    /// 1º clique: Seleciona (mostra painel mas NÃO some)
+    /// 2º clique rápido: Ataca
     /// </summary>
     private void HandleMonsterClick(MonsterController monster)
     {
@@ -248,14 +247,12 @@ public class PlayerController : MonoBehaviour
             // 2º CLIQUE - INICIA ATAQUE AUTOMÁTICO
             Debug.Log($"⚔️ Double click! Starting auto-attack on {monster.monsterName}");
             StartAutoAttack(monster);
-            clickCount = 0;
         }
         else
         {
-            // 1º CLIQUE - APENAS SELECIONA
+            // 1º CLIQUE - APENAS SELECIONA (NÃO SOME O PAINEL)
             Debug.Log($"🎯 Selected target: {monster.monsterName}");
             SelectTarget(monster);
-            clickCount = 1;
         }
         
         lastClickedMonster = monster;
@@ -263,7 +260,7 @@ public class PlayerController : MonoBehaviour
     }
 
     /// <summary>
-    /// ✅ NOVO - Apenas seleciona o alvo (não ataca)
+    /// ✅ CORRIGIDO - Apenas seleciona o alvo (não ataca, não some)
     /// </summary>
     private void SelectTarget(MonsterController monster)
     {
@@ -276,17 +273,17 @@ public class PlayerController : MonoBehaviour
             SkillManager.Instance.SetCurrentTarget(monster.monsterId);
         }
         
-        // Mostra painel de target
+        // ✅ MANTÉM o painel de target visível
         if (UIManager.Instance != null)
         {
             UIManager.Instance.ShowTargetPanel(monster);
         }
         
-        Debug.Log($"🎯 Target selected: {monster.monsterName} (ID: {monster.monsterId})");
+        Debug.Log($"🎯 Target selected: {monster.monsterName} (ID: {monster.monsterId}) - Panel stays visible");
     }
 
     /// <summary>
-    /// ✅ NOVO - Inicia ataque automático
+    /// ✅ CORRIGIDO - Inicia ataque automático
     /// </summary>
     private void StartAutoAttack(MonsterController monster)
     {
@@ -309,14 +306,13 @@ public class PlayerController : MonoBehaviour
     }
 
     /// <summary>
-    /// ✅ NOVO - Limpa target atual
+    /// ✅ CORRIGIDO - Limpa target atual
     /// </summary>
-    private void ClearTarget()
+    public void ClearTarget()
     {
         currentTargetMonsterId = -1;
         currentTarget = null;
         lastClickedMonster = null;
-        clickCount = 0;
         
         if (SkillManager.Instance != null)
         {
@@ -394,10 +390,14 @@ public class PlayerController : MonoBehaviour
         isDead = dead;
         inCombat = combat;
         
-        // Limpa target se saiu de combate
+        // ✅ CORRIGIDO - Só limpa target se realmente saiu de combate
         if (!combat && currentTargetMonsterId != -1)
         {
-            ClearTarget();
+            // Verifica se o monstro morreu
+            if (currentTarget != null && !currentTarget.isAlive)
+            {
+                ClearTarget();
+            }
         }
 
         if (combat && targetPos.HasValue && currentTarget != null)
@@ -793,5 +793,13 @@ public class PlayerController : MonoBehaviour
     public MonsterController GetCurrentTarget()
     {
         return currentTarget;
+    }
+
+    /// <summary>
+    /// ✅ PÚBLICO - Retorna ID do target
+    /// </summary>
+    public int GetCurrentTargetId()
+    {
+        return currentTargetMonsterId;
     }
 }
