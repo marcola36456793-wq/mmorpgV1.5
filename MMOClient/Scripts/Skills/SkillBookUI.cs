@@ -6,7 +6,7 @@ using System.Linq;
 
 /// <summary>
 /// Interface para gerenciar skills (aprender e upar)
-/// Coloque em: MMOClient/Scripts/UI/Skills/SkillBookUI.cs
+/// VERSÃO CORRIGIDA - Usa SkillEntryUI
 /// </summary>
 public class SkillBookUI : MonoBehaviour
 {
@@ -17,11 +17,11 @@ public class SkillBookUI : MonoBehaviour
     
     [Header("Learned Skills")]
     public Transform learnedSkillsContainer;
-    public GameObject learnedSkillEntryPrefab;
+    public GameObject learnedSkillEntryPrefab; // ✅ Agora com SkillEntryUI
     
     [Header("Available Skills")]
     public Transform availableSkillsContainer;
-    public GameObject availableSkillEntryPrefab;
+    public GameObject availableSkillEntryPrefab; // ✅ Agora com SkillEntryUI
     
     [Header("Info Panel")]
     public GameObject skillInfoPanel;
@@ -35,14 +35,14 @@ public class SkillBookUI : MonoBehaviour
     [Header("Slot Selection")]
     public GameObject slotSelectionPanel;
     public Transform slotButtonsContainer;
+    public GameObject slotButtonPrefab; // ✅ Prefab para botões de slot
     
     [Header("Status")]
     public TextMeshProUGUI statusPointsText;
     
     private List<LearnedSkillData> learnedSkills = new List<LearnedSkillData>();
     private List<SkillTemplateData> availableSkills = new List<SkillTemplateData>();
-    private LearnedSkillData selectedLearnedSkill;
-    private SkillTemplateData selectedAvailableSkill;
+    private SkillEntryUI selectedEntry;
     private bool isVisible = false;
 
     private void Awake()
@@ -74,20 +74,18 @@ public class SkillBookUI : MonoBehaviour
         
         if (assignSlotButton != null)
             assignSlotButton.onClick.AddListener(OnAssignSlotButtonClick);
+
+        HideSkillInfo();
     }
 
     private void Update()
     {
-        // Hotkey para abrir (K = Skills)
         if (Input.GetKeyDown(KeyCode.K))
         {
             Toggle();
         }
     }
 
-    /// <summary>
-    /// Abre/fecha o livro de skills
-    /// </summary>
     public void Toggle()
     {
         if (isVisible)
@@ -102,8 +100,6 @@ public class SkillBookUI : MonoBehaviour
             skillBookPanel.SetActive(true);
         
         isVisible = true;
-        
-        // Solicita dados atualizados
         RequestSkillData();
     }
 
@@ -115,15 +111,13 @@ public class SkillBookUI : MonoBehaviour
         isVisible = false;
     }
 
-    /// <summary>
-    /// Solicita dados de skills do servidor
-    /// </summary>
     private void RequestSkillData()
     {
         // Skills aprendidas
-        SkillManager.Instance?.RequestSkills();
+        if (SkillManager.Instance != null)
+            SkillManager.Instance.RequestSkills();
         
-        // Skills disponíveis para aprender
+        // Skills disponíveis
         var message = new
         {
             type = "getSkillList"
@@ -134,7 +128,7 @@ public class SkillBookUI : MonoBehaviour
     }
 
     /// <summary>
-    /// Atualiza lista de skills aprendidas
+    /// ✅ CORRIGIDO - Usa SkillEntryUI
     /// </summary>
     public void UpdateLearnedSkills(List<LearnedSkillData> skills)
     {
@@ -144,7 +138,7 @@ public class SkillBookUI : MonoBehaviour
     }
 
     /// <summary>
-    /// Atualiza lista de skills disponíveis
+    /// ✅ CORRIGIDO - Usa SkillEntryUI
     /// </summary>
     public void UpdateAvailableSkills(List<SkillTemplateData> skills)
     {
@@ -167,9 +161,13 @@ public class SkillBookUI : MonoBehaviour
                 continue;
 
             GameObject entry = Instantiate(learnedSkillEntryPrefab, learnedSkillsContainer);
+            SkillEntryUI entryUI = entry.GetComponent<SkillEntryUI>();
             
-            // Configura entry
-            ConfigureLearnedSkillEntry(entry, skill);
+            if (entryUI != null)
+            {
+                entryUI.SetLearnedSkill(skill);
+                entryUI.OnClicked += OnSkillEntryClicked;
+            }
         }
     }
 
@@ -181,87 +179,59 @@ public class SkillBookUI : MonoBehaviour
             Destroy(child.gameObject);
         }
 
+        var charData = WorldManager.Instance.GetLocalCharacterData();
+        if (charData == null)
+            return;
+
         // Preenche com skills disponíveis
         foreach (var skill in availableSkills)
         {
             GameObject entry = Instantiate(availableSkillEntryPrefab, availableSkillsContainer);
+            SkillEntryUI entryUI = entry.GetComponent<SkillEntryUI>();
             
-            // Configura entry
-            ConfigureAvailableSkillEntry(entry, skill);
-        }
-    }
-
-    private void ConfigureLearnedSkillEntry(GameObject entry, LearnedSkillData skill)
-    {
-        var nameText = entry.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>();
-        var levelText = entry.transform.Find("LevelText")?.GetComponent<TextMeshProUGUI>();
-        var slotText = entry.transform.Find("SlotText")?.GetComponent<TextMeshProUGUI>();
-        var button = entry.GetComponent<Button>();
-
-        if (nameText != null)
-            nameText.text = skill.template.name;
-
-        if (levelText != null)
-            levelText.text = $"Lv. {skill.currentLevel}/{skill.template.maxLevel}";
-
-        if (slotText != null)
-            slotText.text = skill.slotNumber > 0 ? $"Slot {skill.slotNumber}" : "Sem slot";
-
-        if (button != null)
-        {
-            button.onClick.AddListener(() => SelectLearnedSkill(skill));
-        }
-    }
-
-    private void ConfigureAvailableSkillEntry(GameObject entry, SkillTemplateData skill)
-    {
-        var nameText = entry.transform.Find("NameText")?.GetComponent<TextMeshProUGUI>();
-        var reqText = entry.transform.Find("RequirementText")?.GetComponent<TextMeshProUGUI>();
-        var button = entry.GetComponent<Button>();
-
-        if (nameText != null)
-            nameText.text = skill.name;
-
-        if (reqText != null)
-        {
-            var charData = WorldManager.Instance.GetLocalCharacterData();
-            bool canLearn = charData != null && charData.level >= skill.requiredLevel;
-            
-            string color = canLearn ? "lime" : "red";
-            reqText.text = $"<color={color}>Requer Lv. {skill.requiredLevel}</color>";
-        }
-
-        if (button != null)
-        {
-            button.onClick.AddListener(() => SelectAvailableSkill(skill));
+            if (entryUI != null)
+            {
+                bool canLearn = charData.level >= skill.requiredLevel;
+                entryUI.SetAvailableSkill(skill, canLearn);
+                entryUI.OnClicked += OnSkillEntryClicked;
+            }
         }
     }
 
     /// <summary>
-    /// Seleciona uma skill aprendida
+    /// ✅ CORRIGIDO - Handler unificado
     /// </summary>
-    private void SelectLearnedSkill(LearnedSkillData skill)
+    private void OnSkillEntryClicked(SkillEntryUI entry)
     {
-        selectedLearnedSkill = skill;
-        selectedAvailableSkill = null;
-        
-        ShowSkillInfo(skill.template, skill);
+        // Deseleciona anterior
+        if (selectedEntry != null)
+        {
+            selectedEntry.SetSelected(false);
+        }
+
+        // Seleciona novo
+        selectedEntry = entry;
+        entry.SetSelected(true);
+
+        // Mostra info
+        if (entry.IsLearned())
+        {
+            var skill = entry.GetLearnedSkill();
+            if (skill != null && skill.template != null)
+            {
+                ShowSkillInfo(skill.template, skill);
+            }
+        }
+        else
+        {
+            var skill = entry.GetAvailableSkill();
+            if (skill != null)
+            {
+                ShowSkillInfo(skill, null);
+            }
+        }
     }
 
-    /// <summary>
-    /// Seleciona uma skill disponível
-    /// </summary>
-    private void SelectAvailableSkill(SkillTemplateData skill)
-    {
-        selectedAvailableSkill = skill;
-        selectedLearnedSkill = null;
-        
-        ShowSkillInfo(skill, null);
-    }
-
-    /// <summary>
-    /// Mostra informações detalhadas da skill
-    /// </summary>
     private void ShowSkillInfo(SkillTemplateData template, LearnedSkillData learnedData)
     {
         if (skillInfoPanel != null)
@@ -283,8 +253,13 @@ public class SkillBookUI : MonoBehaviour
             skillInfoStats.text = BuildDetailedStats(template, learnedData);
         }
 
-        // Configura botões
         UpdateInfoButtons(template, learnedData);
+    }
+
+    private void HideSkillInfo()
+    {
+        if (skillInfoPanel != null)
+            skillInfoPanel.SetActive(false);
     }
 
     private string BuildDetailedStats(SkillTemplateData template, LearnedSkillData learnedData)
@@ -313,7 +288,6 @@ public class SkillBookUI : MonoBehaviour
 
         stats += "\n";
 
-        // Nível atual
         int currentLevel = learnedData?.currentLevel ?? 1;
         var levelData = GetLevelData(template, currentLevel);
 
@@ -365,7 +339,7 @@ public class SkillBookUI : MonoBehaviour
         // Botão de aprender
         if (learnButton != null)
         {
-            bool showLearn = learnedData == null && selectedAvailableSkill != null;
+            bool showLearn = learnedData == null;
             bool canLearn = charData.level >= template.requiredLevel;
             
             learnButton.gameObject.SetActive(showLearn);
@@ -404,27 +378,33 @@ public class SkillBookUI : MonoBehaviour
 
     private void OnLearnButtonClick()
     {
-        if (selectedAvailableSkill == null)
-            return;
-
-        // Mostra seleção de slot
-        ShowSlotSelection();
+        if (selectedEntry == null || !selectedEntry.IsLearned())
+        {
+            var skill = selectedEntry?.GetAvailableSkill();
+            if (skill != null)
+            {
+                ShowSlotSelection();
+            }
+        }
     }
 
     private void OnLevelUpButtonClick()
     {
-        if (selectedLearnedSkill == null)
+        if (selectedEntry == null || !selectedEntry.IsLearned())
             return;
 
-        SkillManager.Instance?.LevelUpSkill(selectedLearnedSkill.skillId);
+        var skill = selectedEntry.GetLearnedSkill();
+        if (skill != null)
+        {
+            SkillManager.Instance?.LevelUpSkill(skill.skillId);
+        }
     }
 
     private void OnAssignSlotButtonClick()
     {
-        if (selectedLearnedSkill == null)
+        if (selectedEntry == null || !selectedEntry.IsLearned())
             return;
 
-        // Mostra seleção de slot
         ShowSlotSelection();
     }
 
@@ -450,18 +430,30 @@ public class SkillBookUI : MonoBehaviour
         {
             int slotNumber = i;
             
-            GameObject buttonObj = new GameObject($"SlotButton_{i}");
-            buttonObj.transform.SetParent(slotButtonsContainer);
+            GameObject buttonObj;
             
-            Button button = buttonObj.AddComponent<Button>();
-            Image image = buttonObj.AddComponent<Image>();
+            if (slotButtonPrefab != null)
+            {
+                buttonObj = Instantiate(slotButtonPrefab, slotButtonsContainer);
+            }
+            else
+            {
+                // Fallback: cria botão simples
+                buttonObj = new GameObject($"SlotButton_{i}");
+                buttonObj.transform.SetParent(slotButtonsContainer);
+                buttonObj.AddComponent<Image>();
+                
+                GameObject textObj = new GameObject("Text");
+                textObj.transform.SetParent(buttonObj.transform);
+                TextMeshProUGUI text = textObj.AddComponent<TextMeshProUGUI>();
+                text.text = i.ToString();
+                text.alignment = TextAlignmentOptions.Center;
+                text.fontSize = 24;
+            }
             
-            GameObject textObj = new GameObject("Text");
-            textObj.transform.SetParent(buttonObj.transform);
-            TextMeshProUGUI text = textObj.AddComponent<TextMeshProUGUI>();
-            text.text = i.ToString();
-            text.alignment = TextAlignmentOptions.Center;
-            text.fontSize = 24;
+            Button button = buttonObj.GetComponent<Button>();
+            if (button == null)
+                button = buttonObj.AddComponent<Button>();
             
             button.onClick.AddListener(() => OnSlotSelected(slotNumber));
         }
@@ -472,16 +464,27 @@ public class SkillBookUI : MonoBehaviour
         if (slotSelectionPanel != null)
             slotSelectionPanel.SetActive(false);
 
+        if (selectedEntry == null)
+            return;
+
         // Aprender skill nova
-        if (selectedAvailableSkill != null)
+        if (!selectedEntry.IsLearned())
         {
-            SkillManager.Instance?.LearnSkill(selectedAvailableSkill.id, slotNumber);
+            var skill = selectedEntry.GetAvailableSkill();
+            if (skill != null)
+            {
+                SkillManager.Instance?.LearnSkill(skill.id, slotNumber);
+            }
         }
         // Reatribuir slot de skill existente
-        else if (selectedLearnedSkill != null)
+        else
         {
-            // TODO: Implementar reatribuição de slot
-            Debug.Log($"Reatribuir skill {selectedLearnedSkill.skillId} para slot {slotNumber}");
+            var skill = selectedEntry.GetLearnedSkill();
+            if (skill != null)
+            {
+                // TODO: Implementar reatribuição de slot no servidor
+                Debug.Log($"Reatribuir skill {skill.skillId} para slot {slotNumber}");
+            }
         }
     }
 
