@@ -19,13 +19,16 @@ public class SkillManager : MonoBehaviour
     
     private int currentTargetMonsterId = -1;
 
-    // ✅ Controle de movimento para skill
+    // ✅ CORREÇÃO: Controle de movimento para skill COM RANGE CORRETO
     private bool movingToUseSkill = false;
     private int pendingSkillId = 0;
     private int pendingSlotNumber = 0;
-    private string pendingTargetId = null; // ✅ ID do alvo
+    private string pendingTargetId = null;
     private Vector3 targetPositionForSkill;
     private float skillRange = 0f;
+    
+    // ✅ NOVO: Distância mínima segura para parar ANTES do alvo
+    private const float RANGE_BUFFER = 0.5f; // Para 0.5m antes do range máximo
 
     private void Awake()
     {
@@ -150,12 +153,17 @@ public class SkillManager : MonoBehaviour
     public void ClearCurrentTarget()
     {
         currentTargetMonsterId = -1;
-        movingToUseSkill = false;
-        pendingSkillId = 0;
-        Debug.Log($"🎯 SkillManager: Target cleared");
+        
+        // ✅ CORREÇÃO: Só cancela movimento se estava indo usar skill
+        if (movingToUseSkill)
+        {
+            movingToUseSkill = false;
+            pendingSkillId = 0;
+            Debug.Log($"🎯 SkillManager: Cancelled skill movement");
+        }
     }
 
- public void UseSkill(int skillId, int slotNumber)
+    public void UseSkill(int skillId, int slotNumber)
     {
         if (!learnedSkills.TryGetValue(skillId, out var skill))
         {
@@ -223,6 +231,9 @@ public class SkillManager : MonoBehaviour
 
             Debug.Log($"📏 Distance to target: {distance:F2}m, Skill range: {range:F2}m");
 
+            // ✅ CORREÇÃO: Usa buffer para parar ANTES do range máximo
+            float effectiveRange = range - RANGE_BUFFER;
+
             if (distance > range)
             {
                 Debug.Log($"🏃 Too far! Moving to range first...");
@@ -230,11 +241,12 @@ public class SkillManager : MonoBehaviour
                 movingToUseSkill = true;
                 pendingSkillId = skillId;
                 pendingSlotNumber = slotNumber;
-                pendingTargetId = currentTargetMonsterId.ToString(); // ✅ SALVA ID
+                pendingTargetId = currentTargetMonsterId.ToString();
                 targetPositionForSkill = monsterObj.transform.position;
-                skillRange = range;
-
-                SendMoveRequestToServer(monsterObj.transform.position);
+                skillRange = effectiveRange; // ✅ USA RANGE COM BUFFER
+                
+                // ✅ CORREÇÃO: Move para UMA POSIÇÃO NO RANGE, não para o alvo
+                SendMoveToSkillRange(player.transform.position, monsterObj.transform.position, effectiveRange);
                 
                 if (UIManager.Instance != null)
                 {
@@ -245,12 +257,46 @@ public class SkillManager : MonoBehaviour
             }
         }
 
-        // ✅ ESTÁ NO RANGE - USA A SKILL
+        // ✅ ESTÁ NO RANGE - USA A SKILL (mas NÃO inicia cooldown visual aqui)
         ExecuteSkill(skillId, slotNumber, skill.template);
     }
 
     /// <summary>
-    /// ✅ NOVO - Verifica range e atualiza posição do alvo continuamente
+    /// ✅ CORRIGIDO: Calcula posição DENTRO DO RANGE (não na posição exata do alvo)
+    /// </summary>
+    private void SendMoveToSkillRange(Vector3 playerPos, Vector3 monsterPos, float range)
+    {
+        // Calcula direção player -> monstro
+        Vector3 direction = (monsterPos - playerPos).normalized;
+        
+        // Calcula ponto NO RANGE (não no monstro)
+        Vector3 targetPos = monsterPos - (direction * range);
+        
+        // Ajusta ao terreno
+        if (TerrainHelper.Instance != null)
+        {
+            targetPos = TerrainHelper.Instance.ClampToGround(targetPos, 0f);
+        }
+
+        var message = new
+        {
+            type = "moveRequest",
+            targetPosition = new
+            {
+                x = targetPos.x,
+                y = targetPos.y,
+                z = targetPos.z
+            }
+        };
+
+        string json = JsonConvert.SerializeObject(message);
+        ClientManager.Instance.SendMessage(json);
+        
+        Debug.Log($"🏃 Moving to skill range position: ({targetPos.x:F1}, {targetPos.z:F1})");
+    }
+
+    /// <summary>
+    /// ✅ CORRIGIDO: Verifica range continuamente e usa skill quando chega
     /// </summary>
     private void CheckSkillRangeAndUse()
     {
@@ -280,34 +326,40 @@ public class SkillManager : MonoBehaviour
             return;
         }
 
-        // ✅ Atualiza posição do alvo a cada frame
-        targetPositionForSkill = monsterObj.transform.position;
-        
-        float distance = Vector3.Distance(player.transform.position, targetPositionForSkill);
+        // ✅ CORREÇÃO: Não atualiza posição do alvo constantemente (causa "grudamento")
+        float distance = Vector3.Distance(player.transform.position, monsterObj.transform.position);
 
-        // Chegou no range?
-        if (distance <= skillRange)
+        // Chegou no range? (com buffer de segurança)
+        if (distance <= skillRange + 0.2f)
         {
             Debug.Log($"✅ Reached skill range! Using skill {pendingSkillId}");
             
             if (learnedSkills.TryGetValue(pendingSkillId, out var skill))
             {
                 ExecuteSkill(pendingSkillId, pendingSlotNumber, skill.template);
+                
+                // ✅ CORREÇÃO: SÓ AGORA inicia o cooldown visual
+                var slot = skillSlots.FirstOrDefault(s => s.slotNumber == pendingSlotNumber);
+                if (slot != null)
+                {
+                    slot.StartCooldown(skill.template.cooldown);
+                }
             }
             
             movingToUseSkill = false;
             pendingSkillId = 0;
             pendingTargetId = null;
         }
-        else
+        // Se ficou muito longe (alvo se moveu muito), recalcula
+        else if (distance > skillRange + 3f)
         {
-            // ✅ ATUALIZA movimento constantemente (perseguição)
-            SendMoveRequestToServer(targetPositionForSkill);
+            Debug.Log($"⚠️ Target moved too far, recalculating path...");
+            SendMoveToSkillRange(player.transform.position, monsterObj.transform.position, skillRange);
         }
     }
 
     /// <summary>
-    /// ✅ NOVO - Executa a skill (envia para servidor)
+    /// ✅ CORRIGIDO: Executa a skill (envia para servidor) SEM iniciar cooldown aqui
     /// </summary>
     private void ExecuteSkill(int skillId, int slotNumber, SkillTemplateData template)
     {
@@ -382,33 +434,13 @@ public class SkillManager : MonoBehaviour
         
         return null;
     }
-	/// <summary>
-/// ✅ Verifica se está se movendo para usar skill
-/// </summary>
-public bool IsMovingToUseSkill()
-{
-    return movingToUseSkill;
-}
-    private void SendMoveRequestToServer(Vector3 targetPosition)
+
+    /// <summary>
+    /// ✅ Verifica se está se movendo para usar skill
+    /// </summary>
+    public bool IsMovingToUseSkill()
     {
-        if (TerrainHelper.Instance != null)
-        {
-            targetPosition = TerrainHelper.Instance.ClampToGround(targetPosition, 0f);
-        }
-
-        var message = new
-        {
-            type = "moveRequest",
-            targetPosition = new
-            {
-                x = targetPosition.x,
-                y = targetPosition.y,
-                z = targetPosition.z
-            }
-        };
-
-        string json = JsonConvert.SerializeObject(message);
-        ClientManager.Instance.SendMessage(json);
+        return movingToUseSkill;
     }
 
     public void LearnSkill(int skillId, int slotNumber)
