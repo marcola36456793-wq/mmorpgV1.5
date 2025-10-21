@@ -1103,41 +1103,62 @@ private static string HandleGetSkills(JObject json, string sessionId)
     });
 }
 
-private static string HandleGetSkillList(JObject json, string sessionId)
-{
-    var player = PlayerManager.Instance.GetPlayer(sessionId);
-    
-    if (player == null)
-    {
-        return JsonConvert.SerializeObject(new { type = "error", message = "Player not found" });
-    }
-
-    var availableSkills = SkillManager.Instance.GetSkillsByClass(player.character.classe);
-
-    var skillList = availableSkills.Select(template => new
-    {
-        id = template.id,
-        name = template.name,
-        description = template.description,
-        skillType = template.skillType,
-        damageType = template.damageType,
-        targetType = template.targetType,
-        requiredLevel = template.requiredLevel,
-        maxLevel = template.maxLevel,
-        manaCost = template.manaCost,
-        cooldown = template.cooldown,
-        iconPath = template.iconPath,
-        levels = template.levels,
-        canLearn = player.character.level >= template.requiredLevel &&
-                  !player.character.learnedSkills.Any(s => s.skillId == template.id)
-    }).ToList();
-
-    return JsonConvert.SerializeObject(new
-    {
-        type = "skillListResponse",
-        skills = skillList
-    });
-}
+		private static string HandleGetSkillList(JObject json, string sessionId)
+		{
+			Console.WriteLine($"📖 HandleGetSkillList called for session: {sessionId}");
+			
+			var player = PlayerManager.Instance.GetPlayer(sessionId);
+			
+			if (player == null)
+			{
+				Console.WriteLine($"❌ Player not found: {sessionId}");
+				return JsonConvert.SerializeObject(new { type = "error", message = "Player not found" });
+			}
+		
+			Console.WriteLine($"   Player found: {player.character.nome} (Class: {player.character.classe})");
+			
+			var availableSkills = SkillManager.Instance.GetSkillsByClass(player.character.classe);
+			
+			Console.WriteLine($"   Found {availableSkills.Count} skills for class {player.character.classe}");
+		
+			var skillList = availableSkills.Select(template => new
+			{
+				id = template.id,
+				name = template.name,
+				description = template.description,
+				skillType = template.skillType,
+				damageType = template.damageType,
+				targetType = template.targetType,
+				requiredLevel = template.requiredLevel,
+				maxLevel = template.maxLevel,
+				manaCost = template.manaCost,
+				cooldown = template.cooldown,
+				iconPath = template.iconPath,
+				levels = template.levels,
+				canLearn = player.character.level >= template.requiredLevel &&
+						(player.character.learnedSkills == null || 
+						!player.character.learnedSkills.Any(s => s.skillId == template.id))
+			}).ToList();
+		
+			Console.WriteLine($"   Sending {skillList.Count} skills to client");
+			
+			// 🔍 DEBUG: Mostra primeira skill
+			if (skillList.Count > 0)
+			{
+				var first = skillList[0];
+				Console.WriteLine($"   Example: {first.name} (Req Lv: {first.requiredLevel}, CanLearn: {first.canLearn})");
+			}
+		
+			var response = JsonConvert.SerializeObject(new
+			{
+				type = "skillListResponse",
+				skills = skillList
+			});
+			
+			Console.WriteLine($"✅ Skill list response sent ({response.Length} bytes)");
+			
+			return response;
+		}
     }
 	
 	
