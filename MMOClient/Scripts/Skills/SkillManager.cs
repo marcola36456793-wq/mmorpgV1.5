@@ -3,11 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
 
-/// <summary>
-/// ✅ CORRIGIDO - Gerenciador de skills no cliente Unity
-/// Valida range antes de usar skills
-/// Move até o range e então usa
-/// </summary>
 public class SkillManager : MonoBehaviour
 {
     public static SkillManager Instance { get; private set; }
@@ -24,10 +19,11 @@ public class SkillManager : MonoBehaviour
     
     private int currentTargetMonsterId = -1;
 
-    // ✅ NOVO - Controle de movimento para skill
+    // ✅ Controle de movimento para skill
     private bool movingToUseSkill = false;
     private int pendingSkillId = 0;
     private int pendingSlotNumber = 0;
+    private string pendingTargetId = null; // ✅ ID do alvo
     private Vector3 targetPositionForSkill;
     private float skillRange = 0f;
 
@@ -51,7 +47,7 @@ public class SkillManager : MonoBehaviour
 
     private void Update()
     {
-        // ✅ NOVO - Verifica se chegou no range para usar skill
+        // ✅ Verifica se chegou no range para usar skill
         if (movingToUseSkill)
         {
             CheckSkillRangeAndUse();
@@ -159,11 +155,7 @@ public class SkillManager : MonoBehaviour
         Debug.Log($"🎯 SkillManager: Target cleared");
     }
 
-    /// <summary>
-    /// ✅ CORRIGIDO - Usa skill com validação de range
-    /// Se não estiver no range, move até lá primeiro
-    /// </summary>
-    public void UseSkill(int skillId, int slotNumber)
+ public void UseSkill(int skillId, int slotNumber)
     {
         if (!learnedSkills.TryGetValue(skillId, out var skill))
         {
@@ -180,7 +172,6 @@ public class SkillManager : MonoBehaviour
         // ✅ VALIDAÇÃO: Verifica se precisa de target
         if (skill.template.targetType == "enemy")
         {
-            // Verifica se tem target selecionado
             if (currentTargetMonsterId <= 0)
             {
                 Debug.Log("❌ Nenhum alvo selecionado!");
@@ -192,7 +183,6 @@ public class SkillManager : MonoBehaviour
                 return;
             }
 
-            // Busca o monstro
             var monsterObj = GameObject.Find($"Monster_{currentTargetMonsterId}") ?? 
                             FindMonsterByIdInScene(currentTargetMonsterId);
             
@@ -220,7 +210,6 @@ public class SkillManager : MonoBehaviour
                 return;
             }
 
-            // ✅ VALIDAÇÃO DE RANGE
             var player = GameObject.FindGameObjectWithTag("Player");
             
             if (player == null)
@@ -236,16 +225,15 @@ public class SkillManager : MonoBehaviour
 
             if (distance > range)
             {
-                // ✅ NÃO ESTÁ NO RANGE - MOVE ATÉ LÁ
                 Debug.Log($"🏃 Too far! Moving to range first...");
                 
                 movingToUseSkill = true;
                 pendingSkillId = skillId;
                 pendingSlotNumber = slotNumber;
+                pendingTargetId = currentTargetMonsterId.ToString(); // ✅ SALVA ID
                 targetPositionForSkill = monsterObj.transform.position;
                 skillRange = range;
 
-                // Move em direção ao monstro
                 SendMoveRequestToServer(monsterObj.transform.position);
                 
                 if (UIManager.Instance != null)
@@ -257,12 +245,12 @@ public class SkillManager : MonoBehaviour
             }
         }
 
-        // ✅ ESTÁ NO RANGE OU NÃO PRECISA DE TARGET - USA A SKILL
+        // ✅ ESTÁ NO RANGE - USA A SKILL
         ExecuteSkill(skillId, slotNumber, skill.template);
     }
 
     /// <summary>
-    /// ✅ NOVO - Verifica se chegou no range e usa a skill
+    /// ✅ NOVO - Verifica range e atualiza posição do alvo continuamente
     /// </summary>
     private void CheckSkillRangeAndUse()
     {
@@ -274,6 +262,27 @@ public class SkillManager : MonoBehaviour
             return;
         }
 
+        // ✅ Busca o alvo NOVAMENTE (pode ter se movido)
+        GameObject monsterObj = null;
+        
+        if (!string.IsNullOrEmpty(pendingTargetId))
+        {
+            monsterObj = GameObject.Find($"Monster_{pendingTargetId}") ?? 
+                        FindMonsterByIdInScene(int.Parse(pendingTargetId));
+        }
+        
+        if (monsterObj == null)
+        {
+            Debug.LogWarning($"❌ Target lost! Cancelling skill {pendingSkillId}");
+            movingToUseSkill = false;
+            pendingSkillId = 0;
+            pendingTargetId = null;
+            return;
+        }
+
+        // ✅ Atualiza posição do alvo a cada frame
+        targetPositionForSkill = monsterObj.transform.position;
+        
         float distance = Vector3.Distance(player.transform.position, targetPositionForSkill);
 
         // Chegou no range?
@@ -288,6 +297,12 @@ public class SkillManager : MonoBehaviour
             
             movingToUseSkill = false;
             pendingSkillId = 0;
+            pendingTargetId = null;
+        }
+        else
+        {
+            // ✅ ATUALIZA movimento constantemente (perseguição)
+            SendMoveRequestToServer(targetPositionForSkill);
         }
     }
 
@@ -367,7 +382,13 @@ public class SkillManager : MonoBehaviour
         
         return null;
     }
-
+	/// <summary>
+/// ✅ Verifica se está se movendo para usar skill
+/// </summary>
+public bool IsMovingToUseSkill()
+{
+    return movingToUseSkill;
+}
     private void SendMoveRequestToServer(Vector3 targetPosition)
     {
         if (TerrainHelper.Instance != null)
