@@ -2,6 +2,13 @@ using UnityEngine;
 using Newtonsoft.Json;
 using TMPro;
 
+/// <summary>
+/// PlayerController - VERSÃO CORRIGIDA
+/// Sistema de target igual Lineage 2:
+/// - 1º clique: Seleciona alvo
+/// - 2º clique: Inicia ataque automático
+/// - Skills: Vai até range e usa
+/// </summary>
 public class PlayerController : MonoBehaviour
 {
     [Header("Movement Settings")]
@@ -50,13 +57,15 @@ public class PlayerController : MonoBehaviour
     private Camera mainCamera;
 
     private float lastClickTime = 0f;
-    private const float CLICK_COOLDOWN = 0.3f;
+    private const float DOUBLE_CLICK_TIME = 0.5f; // Tempo para double click
+    private int clickCount = 0;
+    private MonsterController lastClickedMonster;
+    
     private int currentTargetMonsterId = -1;
 
     private bool isAttacking = false;
     private float lastAttackTime = 0f;
 
-    // ✅ NOVO: Controle de estado de animação
     private bool wasDeadLastFrame = false;
     private bool wasMovingLastFrame = false;
     private bool wasInCombatLastFrame = false;
@@ -122,10 +131,9 @@ public class PlayerController : MonoBehaviour
         if (combatIcon != null)
             combatIcon.SetActive(false);
 
-        // ✅ Inicializa animador no estado correto
         InitializeAnimator();
 
-        Debug.Log($"✅ PlayerController Start: {characterName} - CharacterController enabled: {characterController.enabled}");
+        Debug.Log($"✅ PlayerController Start: {characterName}");
     }
 
     private void Update()
@@ -184,57 +192,144 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-private void HandleInput()
-{
-    if (Input.GetMouseButtonDown(0))
+    /// <summary>
+    /// ✅ SISTEMA DE INPUT CORRIGIDO - Igual Lineage 2
+    /// </summary>
+    private void HandleInput()
     {
-        if (UIManager.IsPointerOverUI())
-            return;
-
-        if (Time.time - lastClickTime < CLICK_COOLDOWN)
-            return;
-
-        lastClickTime = Time.time;
-
-        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-        RaycastHit hit;
-        int monsterLayer = LayerMask.GetMask("Monster");
-
-        if (Physics.Raycast(ray, out hit, 2000f, monsterLayer))
+        if (Input.GetMouseButtonDown(0))
         {
-            var monster = hit.collider.GetComponent<MonsterController>();
-            
-            if (monster != null && monster.isAlive)
-            {
-                AttackMonster(monster);
+            if (UIManager.IsPointerOverUI())
                 return;
-            }
-        }
 
-        if (TerrainHelper.Instance != null)
-        {
-            Vector3 hitPoint;
-            if (TerrainHelper.Instance.RaycastTerrain(ray, out hitPoint))
+            Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+            RaycastHit hit;
+            int monsterLayer = LayerMask.GetMask("Monster");
+
+            // Tenta clicar em monstro
+            if (Physics.Raycast(ray, out hit, 2000f, monsterLayer))
             {
-                SendMoveRequestToServer(hitPoint);
+                var monster = hit.collider.GetComponent<MonsterController>();
                 
-                currentTargetMonsterId = -1;
-                currentTarget = null;
-                
-                // ✅ NOVO - Limpa target do SkillManager
-                if (SkillManager.Instance != null)
+                if (monster != null && monster.isAlive)
                 {
-                    SkillManager.Instance.ClearCurrentTarget();
+                    HandleMonsterClick(monster);
+                    return;
                 }
-                
-                if (UIManager.Instance != null)
+            }
+
+            // Clicou no terreno - move e cancela combate
+            if (TerrainHelper.Instance != null)
+            {
+                Vector3 hitPoint;
+                if (TerrainHelper.Instance.RaycastTerrain(ray, out hitPoint))
                 {
-                    UIManager.Instance.HideTargetPanel();
+                    SendMoveRequestToServer(hitPoint);
+                    
+                    // Cancela combate e limpa target
+                    ClearTarget();
                 }
             }
         }
     }
-}
+
+    /// <summary>
+    /// ✅ NOVO - Sistema de clique em monstro (Lineage 2 style)
+    /// 1º clique: Seleciona
+    /// 2º clique: Ataca
+    /// </summary>
+    private void HandleMonsterClick(MonsterController monster)
+    {
+        float timeSinceLastClick = Time.time - lastClickTime;
+        
+        // Mesmo monstro clicado rapidamente = double click
+        if (monster == lastClickedMonster && timeSinceLastClick < DOUBLE_CLICK_TIME)
+        {
+            // 2º CLIQUE - INICIA ATAQUE AUTOMÁTICO
+            Debug.Log($"⚔️ Double click! Starting auto-attack on {monster.monsterName}");
+            StartAutoAttack(monster);
+            clickCount = 0;
+        }
+        else
+        {
+            // 1º CLIQUE - APENAS SELECIONA
+            Debug.Log($"🎯 Selected target: {monster.monsterName}");
+            SelectTarget(monster);
+            clickCount = 1;
+        }
+        
+        lastClickedMonster = monster;
+        lastClickTime = Time.time;
+    }
+
+    /// <summary>
+    /// ✅ NOVO - Apenas seleciona o alvo (não ataca)
+    /// </summary>
+    private void SelectTarget(MonsterController monster)
+    {
+        currentTarget = monster;
+        currentTargetMonsterId = monster.monsterId;
+        
+        // Notifica SkillManager sobre target
+        if (SkillManager.Instance != null)
+        {
+            SkillManager.Instance.SetCurrentTarget(monster.monsterId);
+        }
+        
+        // Mostra painel de target
+        if (UIManager.Instance != null)
+        {
+            UIManager.Instance.ShowTargetPanel(monster);
+        }
+        
+        Debug.Log($"🎯 Target selected: {monster.monsterName} (ID: {monster.monsterId})");
+    }
+
+    /// <summary>
+    /// ✅ NOVO - Inicia ataque automático
+    /// </summary>
+    private void StartAutoAttack(MonsterController monster)
+    {
+        if (currentTarget != monster)
+        {
+            SelectTarget(monster);
+        }
+        
+        // Envia comando de ataque ao servidor
+        var message = new
+        {
+            type = "attackMonster",
+            monsterId = monster.monsterId
+        };
+
+        string json = JsonConvert.SerializeObject(message);
+        ClientManager.Instance.SendMessage(json);
+        
+        Debug.Log($"⚔️ Started auto-attack on {monster.monsterName} (ID: {monster.monsterId})");
+    }
+
+    /// <summary>
+    /// ✅ NOVO - Limpa target atual
+    /// </summary>
+    private void ClearTarget()
+    {
+        currentTargetMonsterId = -1;
+        currentTarget = null;
+        lastClickedMonster = null;
+        clickCount = 0;
+        
+        if (SkillManager.Instance != null)
+        {
+            SkillManager.Instance.ClearCurrentTarget();
+        }
+        
+        if (UIManager.Instance != null)
+        {
+            UIManager.Instance.HideTargetPanel();
+        }
+        
+        Debug.Log("🚫 Target cleared");
+    }
 
     private void SendMoveRequestToServer(Vector3 targetPosition)
     {
@@ -257,33 +352,6 @@ private void HandleInput()
         string json = JsonConvert.SerializeObject(message);
         ClientManager.Instance.SendMessage(json);
     }
-private void AttackMonster(MonsterController monster)
-{
-    currentTarget = monster;
-    currentTargetMonsterId = monster.monsterId;
-    
-    // ✅ NOVO - Notifica SkillManager sobre o target atual
-    if (SkillManager.Instance != null)
-    {
-        SkillManager.Instance.SetCurrentTarget(monster.monsterId);
-    }
-    
-    if (UIManager.Instance != null)
-    {
-        UIManager.Instance.ShowTargetPanel(monster);
-    }
-    
-    var message = new
-    {
-        type = "attackMonster",
-        monsterId = monster.monsterId
-    };
-
-    string json = JsonConvert.SerializeObject(message);
-    ClientManager.Instance.SendMessage(json);
-    
-    Debug.Log($"⚔️ Attacking {monster.monsterName} (ID:{monster.monsterId})");
-}	
 
     private void UpdateBillboard()
     {
@@ -326,21 +394,10 @@ private void AttackMonster(MonsterController monster)
         isDead = dead;
         inCombat = combat;
         
+        // Limpa target se saiu de combate
         if (!combat && currentTargetMonsterId != -1)
         {
-            currentTargetMonsterId = -1;
-            currentTarget = null;
-            
-			        // ✅ NOVO - Limpa target do SkillManager
-        if (SkillManager.Instance != null)
-        {
-            SkillManager.Instance.ClearCurrentTarget();
-        }
-		
-            if (isLocalPlayer && UIManager.Instance != null)
-            {
-                UIManager.Instance.HideTargetPanel();
-            }
+            ClearTarget();
         }
 
         if (combat && targetPos.HasValue && currentTarget != null)
@@ -411,13 +468,6 @@ private void AttackMonster(MonsterController monster)
         }
     }
 
-    // ========================================
-    // ✅ SISTEMA DE ANIMAÇÕES CORRIGIDO
-    // ========================================
-
-    /// <summary>
-    /// Inicializa o Animator no estado correto
-    /// </summary>
     private void InitializeAnimator()
     {
         if (animator == null)
@@ -426,38 +476,30 @@ private void AttackMonster(MonsterController monster)
             return;
         }
 
-        // Reseta todos os parâmetros
         animator.SetBool("isWalking", false);
         animator.SetBool("inCombat", false);
         animator.SetBool("isDead", false);
         
-        // Se tiver trigger de ataque, reseta
         if (HasParameter(animator, "Attack"))
         {
             animator.ResetTrigger("Attack");
         }
 
-        // Define estado inicial
         if (isDead)
         {
             animator.SetBool("isDead", true);
         }
 
-        Debug.Log($"🎬 {characterName}: Animator initialized - Dead:{isDead}, Walking:{serverIsMoving}, Combat:{serverInCombat}");
+        Debug.Log($"🎬 {characterName}: Animator initialized");
     }
 
-    /// <summary>
-    /// Atualiza animações baseado no estado do servidor
-    /// </summary>
     private void UpdateAnimations()
     {
         if (animator == null)
             return;
 
-        // ✅ PRIORIDADE: Morte tem prioridade máxima
         if (isDead)
         {
-            // Se acabou de morrer
             if (!wasDeadLastFrame)
             {
                 Debug.Log($"💀 {characterName}: Setting death animation");
@@ -474,15 +516,13 @@ private void AttackMonster(MonsterController monster)
             wasDeadLastFrame = true;
             wasMovingLastFrame = false;
             wasInCombatLastFrame = false;
-            return; // Não processa mais nada se está morto
+            return;
         }
 
-        // ✅ Se estava morto e agora não está mais (respawn)
         if (wasDeadLastFrame && !isDead)
         {
             Debug.Log($"✨ {characterName}: Respawned - Resetting animator");
             
-            // FORÇA o reset completo
             animator.SetBool("isDead", false);
             animator.SetBool("isWalking", false);
             animator.SetBool("inCombat", false);
@@ -492,41 +532,32 @@ private void AttackMonster(MonsterController monster)
                 animator.ResetTrigger("Attack");
             }
 
-            // Força transição para Idle
             animator.Play("Idle", 0, 0f);
             
             wasDeadLastFrame = false;
         }
 
-        // ✅ Atualiza animações normais (só se não estiver morto)
         bool shouldWalk = serverIsMoving && !isDead;
         bool shouldCombat = serverInCombat && !isDead;
 
-        // Detecta mudanças de estado
         if (shouldWalk != wasMovingLastFrame)
         {
-            Debug.Log($"🚶 {characterName}: Walking changed to {shouldWalk}");
             animator.SetBool("isWalking", shouldWalk);
             wasMovingLastFrame = shouldWalk;
         }
 
         if (shouldCombat != wasInCombatLastFrame)
         {
-            Debug.Log($"⚔️ {characterName}: Combat changed to {shouldCombat}");
             animator.SetBool("inCombat", shouldCombat);
             wasInCombatLastFrame = shouldCombat;
         }
 
-        // Atualiza flags de ataque
         if (isAttacking && Time.time - lastAttackTime >= attackAnimationDuration)
         {
             isAttacking = false;
         }
     }
 
-    /// <summary>
-    /// Toca animação de ataque
-    /// </summary>
     public void PlayAttackAnimation()
     {
         if (animator == null || isDead)
@@ -540,15 +571,8 @@ private void AttackMonster(MonsterController monster)
             
             Debug.Log($"▶️ {characterName}: Playing attack animation");
         }
-        else
-        {
-            Debug.LogWarning($"⚠️ {characterName}: Animator has no 'Attack' trigger!");
-        }
     }
 
-    /// <summary>
-    /// Verifica se o Animator tem um parâmetro específico
-    /// </summary>
     private bool HasParameter(Animator anim, string paramName)
     {
         foreach (AnimatorControllerParameter param in anim.parameters)
@@ -666,16 +690,13 @@ private void AttackMonster(MonsterController monster)
         InitializeAnimator();
     }
 
-    /// <summary>
-    /// Chamado quando o player morre
-    /// </summary>
     public void OnDeath()
     {
         Debug.Log($"💀 {characterName}: OnDeath called");
         
         isDead = true;
         inCombat = false;
-        currentTargetMonsterId = -1;
+        ClearTarget();
         
         if (animator != null)
         {
@@ -703,22 +724,18 @@ private void AttackMonster(MonsterController monster)
                 UIManager.Instance.HideTargetPanel();
                 UIManager.Instance.ShowCombatStatus(false);
             }
-            currentTarget = null;
         }
 
         wasDeadLastFrame = true;
     }
 
-    /// <summary>
-    /// Chamado quando o player renasce
-    /// </summary>
     public void OnRespawn(Vector3 position)
     {
-        Debug.Log($"✨ {characterName}: OnRespawn called at ({position.x:F1}, {position.y:F1}, {position.z:F1})");
+        Debug.Log($"✨ {characterName}: OnRespawn called");
         
         isDead = false;
         inCombat = false;
-        currentTargetMonsterId = -1;
+        ClearTarget();
         
         if (TerrainHelper.Instance != null)
         {
@@ -737,7 +754,6 @@ private void AttackMonster(MonsterController monster)
         {
             Debug.Log($"✨ {characterName}: Resetting animator after respawn");
             
-            // FORÇA reset completo
             animator.SetBool("isDead", false);
             animator.SetBool("inCombat", false);
             animator.SetBool("isWalking", false);
@@ -747,7 +763,6 @@ private void AttackMonster(MonsterController monster)
                 animator.ResetTrigger("Attack");
             }
 
-            // Força estado Idle imediatamente
             animator.Play("Idle", 0, 0f);
         }
         
@@ -762,5 +777,21 @@ private void AttackMonster(MonsterController monster)
         wasDeadLastFrame = false;
         wasMovingLastFrame = false;
         wasInCombatLastFrame = false;
+    }
+
+    /// <summary>
+    /// ✅ PÚBLICO - Para SkillManager saber se tem target
+    /// </summary>
+    public bool HasTarget()
+    {
+        return currentTarget != null && currentTarget.isAlive;
+    }
+
+    /// <summary>
+    /// ✅ PÚBLICO - Retorna target atual
+    /// </summary>
+    public MonsterController GetCurrentTarget()
+    {
+        return currentTarget;
     }
 }
