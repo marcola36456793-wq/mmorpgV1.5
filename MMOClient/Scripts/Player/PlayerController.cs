@@ -191,46 +191,49 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// ✅ SISTEMA DE INPUT CORRIGIDO - Lineage 2 Style
-    /// </summary>
-    private void HandleInput()
+private void HandleInput()
+{
+    if (Input.GetMouseButtonDown(0))
     {
-        if (Input.GetMouseButtonDown(0))
+        if (UIManager.IsPointerOverUI())
+            return;
+
+        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+        RaycastHit hit;
+        int monsterLayer = LayerMask.GetMask("Monster");
+
+        // Tenta clicar em monstro
+        if (Physics.Raycast(ray, out hit, 2000f, monsterLayer))
         {
-            if (UIManager.IsPointerOverUI())
+            var monster = hit.collider.GetComponent<MonsterController>();
+            
+            if (monster != null && monster.isAlive)
+            {
+                HandleMonsterClick(monster);
                 return;
-
-            Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-            RaycastHit hit;
-            int monsterLayer = LayerMask.GetMask("Monster");
-
-            // Tenta clicar em monstro
-            if (Physics.Raycast(ray, out hit, 2000f, monsterLayer))
-            {
-                var monster = hit.collider.GetComponent<MonsterController>();
-                
-                if (monster != null && monster.isAlive)
-                {
-                    HandleMonsterClick(monster);
-                    return;
-                }
             }
+        }
 
-            // Clicou no terreno - move e cancela combate
-            if (TerrainHelper.Instance != null)
+        // ✅ Só move se NÃO estiver usando skill
+        if (TerrainHelper.Instance != null && !IsMovingForSkill())
+        {
+            Vector3 hitPoint;
+            if (TerrainHelper.Instance.RaycastTerrain(ray, out hitPoint))
             {
-                Vector3 hitPoint;
-                if (TerrainHelper.Instance.RaycastTerrain(ray, out hitPoint))
-                {
-                    SendMoveRequestToServer(hitPoint);
-                    
-                    // Cancela combate e limpa target
-                    ClearTarget();
-                }
+                SendMoveRequestToServer(hitPoint);
+                ClearTarget();
             }
         }
     }
+}
+/// <summary>
+/// ✅ Verifica se está se movendo para usar skill
+/// </summary>
+private bool IsMovingForSkill()
+{
+    return SkillManager.Instance != null && SkillManager.Instance.IsMovingToUseSkill();
+}
+
 
     /// <summary>
     /// ✅ CORRIGIDO - Sistema de clique em monstro
