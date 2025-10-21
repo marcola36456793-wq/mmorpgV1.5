@@ -94,14 +94,30 @@ public class SkillBookUI : MonoBehaviour
             Show();
     }
 
-    public void Show()
+public void Show()
+{
+    Debug.Log("📖 SkillBookUI.Show() called");
+    
+    if (skillBookPanel != null)
     {
-        if (skillBookPanel != null)
-            skillBookPanel.SetActive(true);
-        
-        isVisible = true;
-        RequestSkillData();
+        skillBookPanel.SetActive(true);
+        Debug.Log("✅ SkillBook panel activated");
     }
+    else
+    {
+        Debug.LogError("❌ skillBookPanel is NULL!");
+    }
+    
+    isVisible = true;
+    
+    // 🔍 DEBUG: Verificar referências
+    Debug.Log($"   learnedSkillsContainer: {(learnedSkillsContainer != null ? "OK" : "NULL")}");
+    Debug.Log($"   availableSkillsContainer: {(availableSkillsContainer != null ? "OK" : "NULL")}");
+    Debug.Log($"   learnedSkillEntryPrefab: {(learnedSkillEntryPrefab != null ? "OK" : "NULL")}");
+    Debug.Log($"   availableSkillEntryPrefab: {(availableSkillEntryPrefab != null ? "OK" : "NULL")}");
+    
+    RequestSkillData();
+}
 
     public void Hide()
     {
@@ -111,40 +127,86 @@ public class SkillBookUI : MonoBehaviour
         isVisible = false;
     }
 
-    private void RequestSkillData()
+private void RequestSkillData()
+{
+    Debug.Log("📡 Requesting skill data from server...");
+    
+    // Skills aprendidas
+    if (SkillManager.Instance != null)
     {
-        // Skills aprendidas
-        if (SkillManager.Instance != null)
-            SkillManager.Instance.RequestSkills();
-        
-        // Skills disponíveis
-        var message = new
-        {
-            type = "getSkillList"
-        };
+        Debug.Log("   → Requesting learned skills...");
+        SkillManager.Instance.RequestSkills();
+    }
+    else
+    {
+        Debug.LogError("❌ SkillManager.Instance is NULL!");
+    }
+    
+    // Skills disponíveis
+    var message = new
+    {
+        type = "getSkillList"
+    };
 
-        string json = Newtonsoft.Json.JsonConvert.SerializeObject(message);
+    string json = Newtonsoft.Json.JsonConvert.SerializeObject(message);
+    Debug.Log($"   → Sending getSkillList: {json}");
+    
+    if (ClientManager.Instance != null)
+    {
         ClientManager.Instance.SendMessage(json);
     }
+    else
+    {
+        Debug.LogError("❌ ClientManager.Instance is NULL!");
+    }
+}
 
     /// <summary>
     /// ✅ CORRIGIDO - Usa SkillEntryUI
     /// </summary>
-    public void UpdateLearnedSkills(List<LearnedSkillData> skills)
+public void UpdateLearnedSkills(List<LearnedSkillData> skills)
+{
+    Debug.Log($"📚 UpdateLearnedSkills called with {skills.Count} skills");
+    
+    learnedSkills = skills;
+    
+    if (learnedSkillsContainer == null)
     {
-        learnedSkills = skills;
-        RefreshLearnedSkillsList();
-        UpdateStatusPoints();
+        Debug.LogError("❌ learnedSkillsContainer is NULL!");
+        return;
     }
+    
+    if (learnedSkillEntryPrefab == null)
+    {
+        Debug.LogError("❌ learnedSkillEntryPrefab is NULL!");
+        return;
+    }
+    
+    RefreshLearnedSkillsList();
+    UpdateStatusPoints();
+}
 
-    /// <summary>
-    /// ✅ CORRIGIDO - Usa SkillEntryUI
-    /// </summary>
-    public void UpdateAvailableSkills(List<SkillTemplateData> skills)
+// 🆕 ADICIONAR ESTE MÉTODO TAMBÉM
+public void UpdateAvailableSkills(List<SkillTemplateData> skills)
+{
+    Debug.Log($"📚 UpdateAvailableSkills called with {skills.Count} skills");
+    
+    availableSkills = skills;
+    
+    if (availableSkillsContainer == null)
     {
-        availableSkills = skills;
-        RefreshAvailableSkillsList();
+        Debug.LogError("❌ availableSkillsContainer is NULL!");
+        return;
     }
+    
+    if (availableSkillEntryPrefab == null)
+    {
+        Debug.LogError("❌ availableSkillEntryPrefab is NULL!");
+        return;
+    }
+    
+    RefreshAvailableSkillsList();
+}
 
     private void RefreshLearnedSkillsList()
     {
