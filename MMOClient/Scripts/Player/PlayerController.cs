@@ -184,51 +184,57 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    private void HandleInput()
+private void HandleInput()
+{
+    if (Input.GetMouseButtonDown(0))
     {
-        if (Input.GetMouseButtonDown(0))
+        if (UIManager.IsPointerOverUI())
+            return;
+
+        if (Time.time - lastClickTime < CLICK_COOLDOWN)
+            return;
+
+        lastClickTime = Time.time;
+
+        Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+        RaycastHit hit;
+        int monsterLayer = LayerMask.GetMask("Monster");
+
+        if (Physics.Raycast(ray, out hit, 2000f, monsterLayer))
         {
-            if (UIManager.IsPointerOverUI())
-                return;
-
-            if (Time.time - lastClickTime < CLICK_COOLDOWN)
-                return;
-
-            lastClickTime = Time.time;
-
-            Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-            RaycastHit hit;
-            int monsterLayer = LayerMask.GetMask("Monster");
-
-            if (Physics.Raycast(ray, out hit, 2000f, monsterLayer))
+            var monster = hit.collider.GetComponent<MonsterController>();
+            
+            if (monster != null && monster.isAlive)
             {
-                var monster = hit.collider.GetComponent<MonsterController>();
-                
-                if (monster != null && monster.isAlive)
-                {
-                    AttackMonster(monster);
-                    return;
-                }
+                AttackMonster(monster);
+                return;
             }
+        }
 
-            if (TerrainHelper.Instance != null)
+        if (TerrainHelper.Instance != null)
+        {
+            Vector3 hitPoint;
+            if (TerrainHelper.Instance.RaycastTerrain(ray, out hitPoint))
             {
-                Vector3 hitPoint;
-                if (TerrainHelper.Instance.RaycastTerrain(ray, out hitPoint))
+                SendMoveRequestToServer(hitPoint);
+                
+                currentTargetMonsterId = -1;
+                currentTarget = null;
+                
+                // ✅ NOVO - Limpa target do SkillManager
+                if (SkillManager.Instance != null)
                 {
-                    SendMoveRequestToServer(hitPoint);
-                    
-                    currentTargetMonsterId = -1;
-                    currentTarget = null;
-                    
-                    if (UIManager.Instance != null)
-                    {
-                        UIManager.Instance.HideTargetPanel();
-                    }
+                    SkillManager.Instance.ClearCurrentTarget();
+                }
+                
+                if (UIManager.Instance != null)
+                {
+                    UIManager.Instance.HideTargetPanel();
                 }
             }
         }
     }
+}
 
     private void SendMoveRequestToServer(Vector3 targetPosition)
     {
@@ -251,28 +257,33 @@ public class PlayerController : MonoBehaviour
         string json = JsonConvert.SerializeObject(message);
         ClientManager.Instance.SendMessage(json);
     }
-
-    private void AttackMonster(MonsterController monster)
+private void AttackMonster(MonsterController monster)
+{
+    currentTarget = monster;
+    currentTargetMonsterId = monster.monsterId;
+    
+    // ✅ NOVO - Notifica SkillManager sobre o target atual
+    if (SkillManager.Instance != null)
     {
-        currentTarget = monster;
-        currentTargetMonsterId = monster.monsterId;
-        
-        if (UIManager.Instance != null)
-        {
-            UIManager.Instance.ShowTargetPanel(monster);
-        }
-        
-        var message = new
-        {
-            type = "attackMonster",
-            monsterId = monster.monsterId
-        };
-
-        string json = JsonConvert.SerializeObject(message);
-        ClientManager.Instance.SendMessage(json);
-        
-        Debug.Log($"⚔️ Attacking {monster.monsterName} (ID:{monster.monsterId})");
+        SkillManager.Instance.SetCurrentTarget(monster.monsterId);
     }
+    
+    if (UIManager.Instance != null)
+    {
+        UIManager.Instance.ShowTargetPanel(monster);
+    }
+    
+    var message = new
+    {
+        type = "attackMonster",
+        monsterId = monster.monsterId
+    };
+
+    string json = JsonConvert.SerializeObject(message);
+    ClientManager.Instance.SendMessage(json);
+    
+    Debug.Log($"⚔️ Attacking {monster.monsterName} (ID:{monster.monsterId})");
+}	
 
     private void UpdateBillboard()
     {
@@ -320,6 +331,12 @@ public class PlayerController : MonoBehaviour
             currentTargetMonsterId = -1;
             currentTarget = null;
             
+			        // ✅ NOVO - Limpa target do SkillManager
+        if (SkillManager.Instance != null)
+        {
+            SkillManager.Instance.ClearCurrentTarget();
+        }
+		
             if (isLocalPlayer && UIManager.Instance != null)
             {
                 UIManager.Instance.HideTargetPanel();
