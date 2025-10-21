@@ -358,6 +358,9 @@ case "getSkillList":
             return JsonConvert.SerializeObject(new { type = "error", message = "Failed to set target" });
         }
 
+/// <summary>
+        /// ✅ CORRIGIDO - Handler de ataque com validação melhorada
+        /// </summary>
         private static string HandleAttackMonster(JObject json, string sessionId)
         {
             var monsterId = json["monsterId"]?.ToObject<int>() ?? 0;
@@ -385,6 +388,7 @@ case "getSkillList":
                 return JsonConvert.SerializeObject(new { type = "error", message = "Monster not found or dead" });
             }
 
+            // ✅ CORREÇÃO - Se já está atacando o mesmo monstro, não faz nada
             if (player.inCombat && player.targetMonsterId == monsterId)
             {
                 Console.WriteLine($"⚠️ {player.character.nome} already attacking {monster.template.name}");
@@ -397,11 +401,13 @@ case "getSkillList":
                 });
             }
 
+            // ✅ CORREÇÃO - Se está atacando outro monstro, troca de target
             if (player.inCombat && player.targetMonsterId != monsterId)
             {
                 Console.WriteLine($"🔄 {player.character.nome} switching target to {monster.template.name}");
             }
 
+            // Inicia combate
             player.inCombat = true;
             player.targetMonsterId = monsterId;
             player.targetPosition = new Position
