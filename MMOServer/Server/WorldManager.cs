@@ -183,6 +183,29 @@ private void OnWorldUpdate(object? sender, ElapsedEventArgs e)
                 }
             }
         }
+		
+		/// <summary>
+        /// ✅ NOVO - Broadcast quando player seleciona target (1º clique)
+        /// NÃO inicia combate, apenas mostra que selecionou
+        /// </summary>
+        public void BroadcastTargetSelection(Player player, MonsterInstance monster)
+        {
+            var message = new
+            {
+                type = "targetSelected",
+                playerId = player.sessionId,
+                characterName = player.character.nome,
+                targetId = monster.id,
+                targetName = monster.template.name,
+                targetType = "monster"
+            };
+
+            string json = JsonConvert.SerializeObject(message);
+            GameServer.BroadcastToAll(json);
+            
+            Console.WriteLine($"🎯 {player.character.nome} selected {monster.template.name} as target");
+        }
+		
 		public void BroadcastSkillResult(SkillResult result)
 {
     var message = new
