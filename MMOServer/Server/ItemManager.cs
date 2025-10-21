@@ -460,89 +460,110 @@ public bool RemoveItemFromPlayer(string sessionId, int instanceId, int quantity 
             return "NO_EFFECT";
         }
 
-        public bool EquipItem(string sessionId, int instanceId)
+public bool EquipItem(string sessionId, int instanceId)
+{
+    var player = PlayerManager.Instance.GetPlayer(sessionId);
+    
+    if (player == null)
+    {
+        Console.WriteLine($"❌ EquipItem: Player not found");
+        return false;
+    }
+
+    var inventory = LoadInventory(player.character.id);
+    var item = inventory.GetItem(instanceId);
+    
+    if (item == null)
+    {
+        Console.WriteLine($"❌ EquipItem: Item {instanceId} not found");
+        return false;
+    }
+
+    if (item.template == null)
+    {
+        item.template = GetItemTemplate(item.templateId);
+    }
+
+    var template = item.template;
+    
+    if (template == null)
+    {
+        Console.WriteLine($"❌ EquipItem: Template not found for item {item.templateId}");
+        return false;
+    }
+
+    if (template.type != "equipment")
+    {
+        Console.WriteLine($"❌ EquipItem: Item is not equipment");
+        return false;
+    }
+
+    // ✅ CORREÇÃO: Verifica requisitos mas NÃO retorna erro, apenas loga
+    if (player.character.level < template.requiredLevel)
+    {
+        Console.WriteLine($"⚠️ {player.character.nome} can't equip {template.name} (Level {player.character.level} < {template.requiredLevel})");
+        return false; // Retorna false mas sem dar erro no cliente
+    }
+
+    if (!string.IsNullOrEmpty(template.requiredClass) && template.requiredClass != player.character.classe)
+    {
+        Console.WriteLine($"⚠️ {player.character.nome} can't equip {template.name} (Class mismatch)");
+        return false;
+    }
+
+    string slot = template.slot;
+    
+    int? oldItemId = slot switch
+    {
+        "weapon" => inventory.weaponId,
+        "armor" => inventory.armorId,
+        "helmet" => inventory.helmetId,
+        "boots" => inventory.bootsId,
+        "gloves" => inventory.glovesId,
+        "ring" => inventory.ringId,
+        "necklace" => inventory.necklaceId,
+        _ => null
+    };
+
+    if (oldItemId.HasValue)
+    {
+        var oldItem = inventory.GetItem(oldItemId.Value);
+        
+        if (oldItem != null)
         {
-            var player = PlayerManager.Instance.GetPlayer(sessionId);
+            int usedSlots = inventory.items.Count(i => !i.isEquipped);
+            int availableSlots = inventory.maxSlots - usedSlots;
             
-            if (player == null)
-                return false;
-
-            var inventory = LoadInventory(player.character.id);
-            var item = inventory.GetItem(instanceId);
-            
-            if (item == null)
-                return false;
-
-            if (item.template == null)
+            if (availableSlots <= 0 && item.isEquipped)
             {
-                item.template = GetItemTemplate(item.templateId);
-            }
-
-            var template = item.template;
-            
-            if (template == null)
-            {
-                Console.WriteLine($"❌ Template not found for item {item.templateId}");
+                Console.WriteLine($"⚠️ No space to unequip old item");
                 return false;
             }
-
-            if (template.type != "equipment")
-                return false;
-
-            if (player.character.level < template.requiredLevel)
-                return false;
-
-            if (!string.IsNullOrEmpty(template.requiredClass) && template.requiredClass != player.character.classe)
-                return false;
-
-            string slot = template.slot;
-            int? oldItemId = slot switch
-            {
-                "weapon" => inventory.weaponId,
-                "armor" => inventory.armorId,
-                "helmet" => inventory.helmetId,
-                "boots" => inventory.bootsId,
-                "gloves" => inventory.glovesId,
-                "ring" => inventory.ringId,
-                "necklace" => inventory.necklaceId,
-                _ => null
-            };
-
-            if (oldItemId.HasValue)
-            {
-                var oldItem = inventory.GetItem(oldItemId.Value);
-                if (oldItem != null)
-                {            
-					if (!inventory.HasSpace())
-					{
-						Console.WriteLine($"❌ No space to unequip old item");
-						return false;
-					}
-                    oldItem.isEquipped = false;
-                }
-            }
-
-            item.isEquipped = true;
             
-            switch (slot)
-            {
-                case "weapon": inventory.weaponId = instanceId; break;
-                case "armor": inventory.armorId = instanceId; break;
-                case "helmet": inventory.helmetId = instanceId; break;
-                case "boots": inventory.bootsId = instanceId; break;
-                case "gloves": inventory.glovesId = instanceId; break;
-                case "ring": inventory.ringId = instanceId; break;
-                case "necklace": inventory.necklaceId = instanceId; break;
-            }
-
-            RecalculatePlayerStats(player, inventory);
-            
-            SaveInventory(inventory);
-            DatabaseHandler.Instance.UpdateCharacter(player.character);
-            
-            Console.WriteLine($"⚔️ {player.character.nome} equipped {template.name}");
-            return true;
+            oldItem.isEquipped = false;
         }
+    }
+
+    item.isEquipped = true;
+    
+    switch (slot)
+    {
+        case "weapon": inventory.weaponId = instanceId; break;
+        case "armor": inventory.armorId = instanceId; break;
+        case "helmet": inventory.helmetId = instanceId; break;
+        case "boots": inventory.bootsId = instanceId; break;
+        case "gloves": inventory.glovesId = instanceId; break;
+        case "ring": inventory.ringId = instanceId; break;
+        case "necklace": inventory.necklaceId = instanceId; break;
+    }
+
+    RecalculatePlayerStats(player, inventory);
+    SaveInventory(inventory);
+    DatabaseHandler.Instance.UpdateCharacter(player.character);
+    
+    Console.WriteLine($"⚔️ {player.character.nome} equipped {template.name}");
+    return true;
+}
 
 // Substituir o método UnequipItem no ItemManager.cs
 
